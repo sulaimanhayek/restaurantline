@@ -209,3 +209,74 @@ The project is named `restaurantline`, but the spec names the commands
 Keeping the spec's names for now; this is a one-line change in each command
 should the owner prefer `restaurantline:`. Flagged rather than silently
 resolved.
+
+---
+
+## 0008 — The test suite runs against PostgreSQL, not SQLite
+
+`phpunit.xml` points at a `restaurantline_testing` database on the same
+PostgreSQL server the app uses. `docker/postgres/init/10-create-test-database.sql`
+creates it the first time the postgres volume is initialised.
+
+**Why:** the menu matcher (Phase 2) is built on `pg_trgm` similarity and the
+availability queries use `jsonb`. A SQLite suite would happily go green on a
+query PostgreSQL would reject, which is the most expensive kind of passing
+test — it costs a forker an afternoon on their first deploy rather than five
+seconds in CI.
+
+**Cost:** the suite needs a running database, so it is roughly two seconds
+slower to start and cannot run without Docker. `docker compose up` is already
+the documented quickstart, so this asks nothing new of a forker.
+
+If you already have a `postgres-data` volume from an earlier checkout, the init
+script will not re-run. Either `docker compose down -v`, or:
+
+```
+docker compose exec postgres createdb -U restaurantline restaurantline_testing
+```
+
+---
+
+## 0009 — A removal modifier is named after the ingredient, not the instruction
+
+Removal rows are `Onions`, `Pickles`, `Mayo` — not `No Onions`. The negation
+comes from `ModifierKind::Removal`, whose `ticketPrefix()` renders `NO `.
+
+**Why:** the first draft of the sample menu named them `No Onions`, and the
+kitchen ticket came out reading `NO No Onions`. Naming the ingredient keeps one
+source of truth for the negation and lets the same row be rendered differently
+in each context — `NO Onions` on a ticket, "no onions" when the agent reads the
+order back. The `spoken_aliases` still carry every phrasing a caller uses
+(`no onions`, `without onions`, `hold the onions`), because that is what the
+matcher searches.
+
+**Watch out:** `matchableTerms()` includes the name, so a bare "onions" matches
+a removal. Phase 2's matcher must weight aliases above names for removal rows,
+or scope modifier matching to a chosen item and group. Noted here so it is not
+rediscovered as a bug.
+
+---
+
+## 0010 — PHPStan level 6 with `checkModelProperties`, and three narrow ignores
+
+`checkModelProperties: true` is what makes the `@property` docblocks on the
+models load-bearing: a misspelled `$order->totl` fails the build rather than
+silently reading null. Keeping it costs three ignores, each scoped by path and
+message rather than switched off globally:
+
+1. **`Factory::definition()` return type** (`database/factories/*`). Larastan
+   wants the array keyed by model properties. Its own syntax for expressing
+   that — `array<model property of X, mixed>` — is rejected by the PHPDoc
+   parser bundled with Larastan 3.11, so the stricter form is not actually
+   available. Revisit if a later release parses it.
+2. **Pest closure binding** (`tests/*`). Pest binds test closures to the
+   `TestCase` at runtime; PHPStan sees an unbound closure and reports every
+   `$this->` and every `$this->seed()` as missing. The ignore matches only
+   `Pest\PendingCalls\TestCall`, so genuine errors in test files — a
+   misspelled model property, a method that does not exist — are still caught.
+3. **Expectation template resolution** (`tests/*`). Long `->and()` chains over
+   nullable values defeat the generic inference in `Pest\Expectation`.
+
+`reportUnmatchedIgnoredErrors` is off, so an ignore that stops matching does not
+break the build — but it also will not tell you it is dead. Worth a periodic
+look.

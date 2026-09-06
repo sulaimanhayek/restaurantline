@@ -1,0 +1,53 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+
+    paths:
+        - app
+        - config
+        - database
+        - routes
+        - tests
+
+    excludePaths:
+        - app/Filament/**/*Resource/Pages/*
+        - bootstrap/cache/*
+
+    # Laravel's magic makes a handful of otherwise-correct patterns unprovable
+    # to a static analyser. Each ignore below is a deliberate, narrow exception
+    # rather than a blanket silence — if you find yourself adding a broad one,
+    # prefer fixing the type instead.
+    ignoreErrors:
+        # config/*.php is the one place env() is legitimate.
+        -
+            identifier: larastan.noEnvCallsOutsideOfConfig
+            path: config/*
+
+        # Factory::definition() is declared as array<string, mixed>. Larastan
+        # would rather it named every model property; its own syntax for that
+        # (`array<model property of X, mixed>`) is rejected by the PHPDoc
+        # parser this version ships, so the stricter form is not available.
+        -
+            message: '#definition\(\) should be compatible with return type#'
+            path: database/factories/*
+
+        # Pest binds test closures to the TestCase at runtime. PHPStan sees an
+        # unbound closure and reports every $this-> as missing. The three
+        # patterns below silence exactly that, and nothing else: real errors in
+        # test files — a misspelled model property, a method that does not
+        # exist — are still reported.
+        -
+            message: '#(Access to an undefined property|Call to an undefined method) Pest\\PendingCalls\\TestCall#'
+            path: tests/*
+        -
+            message: '#Unable to resolve the template type TAndValue in call to method Pest\\Expectation#'
+            path: tests/*
+        -
+            message: '#Access to an undefined property Pest\\Mixins\\Expectation#'
+            path: tests/*
+
+    checkModelProperties: true
+    checkOctaneCompatibility: true
+    reportUnmatchedIgnoredErrors: false
