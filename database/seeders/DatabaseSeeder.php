@@ -1,25 +1,29 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Database\Seeders;
 
-use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
+/**
+ * Everything a fresh `docker compose up` needs to be a working demo: one
+ * restaurant, its hours and delivery bands, a full menu, and a day of calls.
+ *
+ * Each seeder is idempotent, so running this a second time updates rather than
+ * duplicates — except DemoOrdersSeeder, which appends a new day of traffic.
+ */
 class DatabaseSeeder extends Seeder
 {
     use WithoutModelEvents;
 
-    /**
-     * Seed the application's database.
-     */
     public function run(): void
     {
-        // User::factory(10)->create();
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
+        $this->call([
+            DemoRestaurantSeeder::class,
+            SampleMenuSeeder::class,
+            DemoOrdersSeeder::class,
         ]);
     }
 }

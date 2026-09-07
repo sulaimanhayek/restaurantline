@@ -1,0 +1,155 @@
+# ---------------------------------------------------------------------------
+# restaurantline — local development stack.
+#
+#   docker compose up
+#
+# That is the whole quickstart. On first boot the entrypoint waits for
+# PostgreSQL, installs dependencies, generates an application key, runs the
+# migrations and seeds a demo restaurant with a full sample menu.
+#
+# No API keys are required. Every outbound integration — ElevenLabs, geocoding,
+# SMS and payments — defaults to a fake driver, so the app is fully explorable
+# offline. See .env.example for how to switch each one to a real driver.
+# ---------------------------------------------------------------------------
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/php/Dockerfile
+  image: restaurantline-app:dev
+  volumes:
+    - .:/var/www/html
+    - composer-cache:/var/www/html/.composer
+  env_file:
+    - .env
+  environment:
+    DB_HOST: postgres
+    REDIS_HOST: redis
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  # The HTTP application. Serves the Filament dashboard, the agent tool
+  # endpoints under /api/agent, and the ElevenLabs post-call webhook.
+  app:
+    <<: *app
+    command: ["docker/php/entrypoint.sh", "serve"]
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/up') ? 0 : 1);"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  # Queue worker. Post-call webhook processing, confirmation SMS, payment links
+  # and conversation review flagging all run here rather than in the request.
+  horizon:
+    <<: *app
+    command: ["docker/php/entrypoint.sh", "horizon"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+
+  # Websocket server backing the kitchen display. Order creation and status
+  # changes broadcast here so the tablet by the pass updates without polling.
+  reverb:
+    <<: *app
+    command: ["docker/php/entrypoint.sh", "reverb"]
+    ports:
+      - "${REVERB_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+
+  # Laravel's scheduler. Currently drives opening-hours transitions and
+  # periodic conversation review sweeps.
+  scheduler:
+    <<: *app
+    command: ["docker/php/entrypoint.sh", "schedule"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-restaurantline}
+      POSTGRES_USER: ${DB_USERNAME:-restaurantline}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+      # Deterministic collation, so fuzzy menu matching behaves identically
+      # on every contributor's machine.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "${DB_PORT_FORWARD:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Creates the separate database the Pest suite runs against.
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-restaurantline} -d ${DB_DATABASE:-restaurantline}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT_FORWARD:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Catches any mail the app sends (Filament password resets, operator
+  # notifications). Open http://localhost:8025 to read it.
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+    restart: unless-stopped
+
+  # Vite dev server for the kitchen display's assets. Not needed just to browse
+  # the app — the dashboard works from built assets.
+  #   docker compose --profile frontend up
+  vite:
+    image: node:22-alpine
+    working_dir: /var/www/html
+    command: ["sh", "-c", "npm install && npm run dev -- --host 0.0.0.0"]
+    volumes:
+      - .:/var/www/html
+      - node-modules:/var/www/html/node_modules
+    ports:
+      - "${VITE_PORT:-5173}:5173"
+    profiles:
+      - frontend
+
+volumes:
+  postgres-data:
+  redis-data:
+  composer-cache:
+  node-modules:

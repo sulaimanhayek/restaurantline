@@ -209,3 +209,183 @@ The project is named `restaurantline`, but the spec names the commands
 Keeping the spec's names for now; this is a one-line change in each command
 should the owner prefer `restaurantline:`. Flagged rather than silently
 resolved.
+
+---
+
+## 0008 — The test suite runs against PostgreSQL, not SQLite
+
+`phpunit.xml` points at a `restaurantline_testing` database on the same
+PostgreSQL server the app uses. `docker/postgres/init/10-create-test-database.sql`
+creates it the first time the postgres volume is initialised.
+
+**Why:** the menu matcher (Phase 2) is built on `pg_trgm` similarity and the
+availability queries use `jsonb`. A SQLite suite would happily go green on a
+query PostgreSQL would reject, which is the most expensive kind of passing
+test — it costs a forker an afternoon on their first deploy rather than five
+seconds in CI.
+
+**Cost:** the suite needs a running database, so it is roughly two seconds
+slower to start and cannot run without Docker. `docker compose up` is already
+the documented quickstart, so this asks nothing new of a forker.
+
+If you already have a `postgres-data` volume from an earlier checkout, the init
+script will not re-run. Either `docker compose down -v`, or:
+
+```
+docker compose exec postgres createdb -U restaurantline restaurantline_testing
+```
+
+---
+
+## 0009 — A removal modifier is named after the ingredient, not the instruction
+
+Removal rows are `Onions`, `Pickles`, `Mayo` — not `No Onions`. The negation
+comes from `ModifierKind::Removal`, whose `ticketPrefix()` renders `NO `.
+
+**Why:** the first draft of the sample menu named them `No Onions`, and the
+kitchen ticket came out reading `NO No Onions`. Naming the ingredient keeps one
+source of truth for the negation and lets the same row be rendered differently
+in each context — `NO Onions` on a ticket, "no onions" when the agent reads the
+order back. The `spoken_aliases` still carry every phrasing a caller uses
+(`no onions`, `without onions`, `hold the onions`), because that is what the
+matcher searches.
+
+**Watch out:** `matchableTerms()` includes the name, so a bare "onions" matches
+a removal. Phase 2's matcher must weight aliases above names for removal rows,
+or scope modifier matching to a chosen item and group. Noted here so it is not
+rediscovered as a bug.
+
+---
+
+## 0010 — PHPStan level 6 with `checkModelProperties`, and three narrow ignores
+
+`checkModelProperties: true` is what makes the `@property` docblocks on the
+models load-bearing: a misspelled `$order->totl` fails the build rather than
+silently reading null. Keeping it costs three ignores, each scoped by path and
+message rather than switched off globally:
+
+1. **`Factory::definition()` return type** (`database/factories/*`). Larastan
+   wants the array keyed by model properties. Its own syntax for expressing
+   that — `array<model property of X, mixed>` — is rejected by the PHPDoc
+   parser bundled with Larastan 3.11, so the stricter form is not actually
+   available. Revisit if a later release parses it.
+2. **Pest closure binding** (`tests/*`). Pest binds test closures to the
+   `TestCase` at runtime; PHPStan sees an unbound closure and reports every
+   `$this->` and every `$this->seed()` as missing. The ignore matches only
+   `Pest\PendingCalls\TestCall`, so genuine errors in test files — a
+   misspelled model property, a method that does not exist — are still caught.
+3. **Expectation template resolution** (`tests/*`). Long `->and()` chains over
+   nullable values defeat the generic inference in `Pest\Expectation`.
+
+`reportUnmatchedIgnoredErrors` is off, so an ignore that stops matching does not
+break the build — but it also will not tell you it is dead. Worth a periodic
+look.
+
+---
+
+## 0011 — The minimum order value applies to delivery only
+
+A takeaway that turns away a customer standing at the counter because they only
+wanted chips does not exist. Minimums exist to make a driver's round trip worth
+running, so `PricingService` charges the restaurant's `minimum_order_value`
+against delivery orders and exempts collection.
+
+Operators who disagree flip `PRICING_MINIMUM_APPLIES_TO_COLLECTION=true`. It is
+config rather than a schema column because it is a policy that applies to the
+whole business, not a per-restaurant fact, and adding a column now would mean a
+migration for every forker who never changes it.
+
+**Reversing it** is one config default.
+
+---
+
+## 0012 — Distances are haversine on plain latitude and longitude, not PostGIS
+
+Delivery radius, fee bands and the "we don't come that far" sentence all need a
+distance between two points. `App\Support\Distance` computes it with the
+haversine formula on the `latitude`/`longitude` columns every geocoded address
+already has.
+
+PostGIS would be more precise. Over the three to five kilometres a single
+kitchen serves, "more precise" means a metre or two — comfortably inside the
+error of the geocoder that produced the coordinates in the first place. What it
+would cost is a database extension in the first hour with the repo, a heavier
+Docker image, and a hosting requirement a forker on a shared Postgres may not be
+able to meet. The optimisation target is that first hour.
+
+What this is explicitly **not** is driving distance. A river between two points
+a kilometre apart makes them a ten-minute drive apart. A client whose delivery
+area is shaped by geography rather than by radius needs a routing API.
+
+**Reversing it** is contained: every distance in the application goes through
+`Distance`, and `DeliveryFeeRule` reads metres and nothing else. Swapping in
+PostGIS or a routing provider means reimplementing one class, not rewriting the
+callers.
+
+---
+
+## 0013 — Menu matching blends two trigram metrics in SQL, 60/40
+
+The matcher scores a caller's words against every menu item name and every
+`spoken_aliases` entry, in one PostgreSQL query, as
+
+```
+0.6 × word_similarity(query, term) + 0.4 × similarity(query, term)
+```
+
+taking the greater of the score for the raw normalised query and for the
+filler-stripped one, and keeping the best-scoring term per item via
+`DISTINCT ON`.
+
+**Why both metrics.** They fail in opposite directions. `similarity()` compares
+whole strings, so "burger" against "Ember Chicken Burger" scores badly purely
+because the item name is longer. `word_similarity()` finds the best-matching run
+inside the longer string, which fixes that — but on its own it scores "chicken"
+at nearly 1.0 against every chicken dish on the menu, so nothing is ever a clear
+winner and the ambiguity check downstream never fires. Weighted together, an
+exact name or alias still wins outright while near-misses stay close enough to
+be offered as alternatives. That gap is what `isAmbiguous()` reads, so the
+weights are load-bearing for whether the agent asks or assumes.
+
+**Why both query forms.** Stripping filler helps "can I get the wings please"
+and hurts an item whose own name contains a stripped word. Scoring both and
+taking the maximum costs one more term in the same query.
+
+**Why in SQL.** `word_similarity()` is impractical to reimplement in PHP, and
+the alternative — loading the whole menu and scoring in the application — is
+what the Phase 1 migration comment originally assumed. That assumption is
+reversed; the comment on the `menu_items` trigram index now says so. This is
+also the concrete reason the test suite needs PostgreSQL (#0008).
+
+**What is not indexed.** Item names use a GIN trigram index. Aliases cannot:
+they are unnested from `jsonb` at query time. For a single restaurant's menu —
+hundreds of rows, not millions — the sequential scan is not measurable. A fork
+running thousands of items per tenant should move aliases into their own table.
+
+**Thresholds** live in `config/restaurantline.php` under `menu`, not in the
+code: `minimum_confidence` (0.3) is the floor for being a candidate at all,
+`confident_threshold` (0.62) is "add it without asking", and `ambiguity_margin`
+(0.08) is how close the runner-up has to be before the agent asks which one.
+Tuning them against a real client's menu is expected, and is exactly what the
+Phase 9 eval harness measures.
+
+**Reversing it** means rewriting one private method, `scoreItems()`. The public
+surface — `search()` returning a `MenuMatchResult` — is independent of how the
+scoring happens.
+
+---
+
+## 0014 — Confidence gaps are rounded before they are compared
+
+Both `MenuMatchResult::isAmbiguous()` and
+`AddressValidationResult::isAmbiguous()` round the gap between the top two
+candidates to four decimal places before testing it against the margin.
+
+Without the rounding, two candidates *exactly* one margin apart are declared
+unambiguous by a floating-point artefact: `1.0 - 0.95` is
+`0.050000000000000044` in binary floating point, which is greater than `0.05`.
+The fake geocoder produces exactly that pair for "42 Cheshire Street" — a house
+and a flat at the same address, the case where the agent most needs to ask.
+
+Four decimal places is not arbitrary: it is the precision both services round
+their confidences to, so nothing below it was ever meaningful.
