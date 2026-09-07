@@ -8,6 +8,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
 use Illuminate\Testing\TestResponse;
+use Tests\Support\FakeElevenLabsSignature;
 use Tests\TestCase;
 
 /*
@@ -175,4 +176,37 @@ function rows(mixed $value): Collection
 
     /** @var array<int, array<string, mixed>> $value */
     return collect($value);
+}
+
+/**
+ * A signed post-call webhook, posted the way ElevenLabs posts one.
+ *
+ * The body is encoded once and both signed and sent as that exact string.
+ * Signing a re-encoded copy would be the one mistake this test suite exists to
+ * catch — the middleware hashes the raw body, and any test that lets the two
+ * diverge would pass while production failed.
+ *
+ * @param  array<string, mixed>  $payload
+ * @return TestResponse<Response>
+ */
+function postWebhook(array $payload, ?string $signature = null, ?int $timestamp = null): TestResponse
+{
+    $body = (string) json_encode($payload);
+
+    /** @var TestResponse<Response> $response */
+    $response = test()->call(
+        'POST',
+        '/webhooks/elevenlabs',
+        server: [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ELEVENLABS_SIGNATURE' => $signature ?? FakeElevenLabsSignature::header(
+                $body,
+                (string) config('restaurantline.elevenlabs.webhook_secret'),
+                $timestamp,
+            ),
+        ],
+        content: $body,
+    );
+
+    return $response;
 }

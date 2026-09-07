@@ -141,6 +141,16 @@ return [
         'voice_id' => env('ELEVENLABS_VOICE_ID'),
         'webhook_secret' => env('ELEVENLABS_WEBHOOK_SECRET'),
         'webhook_tolerance' => (int) env('ELEVENLABS_WEBHOOK_TOLERANCE', 1800),
+
+        /*
+         * Where call recordings are written.
+         *
+         * Local by default so `docker compose up` works with no cloud account.
+         * Point this at s3 before a real restaurant uses it: recordings are the
+         * largest thing this application stores and the one thing it cannot
+         * regenerate.
+         */
+        'audio_disk' => env('ELEVENLABS_AUDIO_DISK', 'local'),
     ],
 
     /*

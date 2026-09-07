@@ -58,6 +58,25 @@ class Conversation extends Model
     protected $guarded = [];
 
     /**
+     * Mirrors the column defaults, so a row means the same thing in memory as
+     * it does once the database has seen it.
+     *
+     * Without this, a model from `firstOrCreate` comes back with these
+     * attributes unset. The database fills them in on insert; the instance does
+     * not know that, so `$conversation->outcome` reads null on exactly the path
+     * that matters — a call that never reached an agent tool and gets its row
+     * from the post-call webhook instead. The `@property` block above promises
+     * a ConversationOutcome, and this is what makes that true.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'direction' => 'inbound',
+        'outcome' => 'pending',
+        'needs_review' => false,
+    ];
+
+    /**
      * @return array<string, string>
      */
     protected function casts(): array

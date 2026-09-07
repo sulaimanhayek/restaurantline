@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\AuthenticateAgent;
+use App\Http\Middleware\VerifyElevenLabsSignature;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -30,6 +31,11 @@ return Application::configure(basePath: dirname(__DIR__))
             ])
                 ->prefix('api/agent')
                 ->group(base_path('routes/agent.php'));
+
+            // Outside the web group on purpose: no session, therefore no CSRF
+            // token to fail on, and the signature is the access control.
+            Route::middleware([VerifyElevenLabsSignature::class])
+                ->group(base_path('routes/webhooks.php'));
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {

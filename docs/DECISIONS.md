@@ -183,6 +183,45 @@ a test fixture and a `FakeElevenLabsSignature` helper so this can be re-verified
 in minutes once a live webhook is available. **Re-check this before shipping to
 a real restaurant.**
 
+### Post-call payload fields, verified 2026-09-07
+
+The envelope was recorded above on 2026-09-06; the fields inside `data` were
+checked against the live documentation a day later, while writing the job that
+reads them. Several are not where a reasonable person would guess, and a reader
+that guesses wrong fails silently — every column involved is nullable, so a
+wrong field name costs data rather than an exception.
+
+`post_call_transcription.data`:
+
+- `conversation_id`, `agent_id`, `agent_name`, `status`
+- `transcript[]` — per turn: `role`, `message`, `tool_calls`, `tool_results`,
+  `time_in_call_secs`, `conversation_turn_metrics`, `feedback`
+- `metadata` — `start_time_unix_secs`, `call_duration_secs`, `cost`,
+  `termination_reason`, `authorization_method`, `charging`, `deletion_settings`
+- `analysis` — `call_successful`, `transcript_summary`,
+  `evaluation_criteria_results`, `data_collection_results`
+- `conversation_initiation_client_data` — including `dynamic_variables`
+- `has_audio`, `has_user_audio`, `has_response_audio`
+
+`post_call_audio.data` is `agent_id`, `conversation_id` and `full_audio`, a
+base64-encoded MP3. `call_initiation_failure.data` is `agent_id`,
+`conversation_id`, `failure_reason` (`busy`, `no-answer` or `unknown`) and a
+`metadata` block carrying the provider's own payload.
+
+Three that cost time:
+
+1. **The caller's number is not a top-level field.** It arrives as the
+   `system__caller_id` dynamic variable, nested inside
+   `conversation_initiation_client_data.dynamic_variables`. The siblings are
+   `system__called_number`, `system__conversation_id`, `system__agent_id`,
+   `system__call_duration_secs` and `system__call_sid`.
+2. **The summary is `analysis.transcript_summary`**, not `call_summary`.
+3. **Cost is `metadata.cost`**, in credits, not currency.
+
+There is no end timestamp. `ended_at` is computed from
+`start_time_unix_secs + call_duration_secs`, which is why a payload missing
+either leaves it null rather than guessing.
+
 ### Twilio phone number attachment is UI-only in the documented flow
 
 The native Twilio integration page documents importing a number through the
@@ -621,3 +660,50 @@ expiry is something a test can actually watch fire.
 The general form of this, worth stating once: a clock the test suite cannot
 move is a branch the test suite cannot reach. Anything in this repo that
 expires, times out, or schedules should read the time through Carbon.
+
+---
+
+## 0024 — The post-call webhook fails closed, answers fast, and explains nothing
+
+Three decisions about the webhook boundary, recorded together because they only
+make sense as a set.
+
+**Fail closed when the secret is unset.** `VerifyElevenLabsSignature` rejects
+every request when `ELEVENLABS_WEBHOOK_SECRET` is empty, rather than skipping
+verification. The alternative — treating an unset secret as "verification off"
+— is the shape of most webhook breaches: it works perfectly in development,
+survives review because nobody reads the disabled branch, and ships as an open
+endpoint that writes to the database. A forker who has not set the secret yet
+gets a 401 and a log line saying why, which is a much better first hour than an
+endpoint anyone can post to.
+
+Consequence, stated plainly: the webhook does not work until the secret is set.
+That is the intent. The signature is the only access control this route has —
+there is no session, no token, no IP allowlist.
+
+**Answer in milliseconds, work in a queue.** The controller validates the
+envelope, dispatches `ProcessElevenLabsWebhook`, and returns 200. Nothing else.
+A webhook sender reads a slow response as a failed delivery and sends the
+payload again, so any work done inline is work that buys duplicates of itself
+— and `post_call_audio` carries a whole base64 MP3, which is not a body to
+process while a socket waits.
+
+A signed payload we cannot parse still gets a 200, with `handled: false` in the
+body. It came from ElevenLabs, so it is a shape change rather than an attack,
+and retrying a shape change just delivers the same unreadable thing until the
+sender gives up. The log line is the actionable part.
+
+**The 401 discloses nothing.** The refusal body is `{"ok": false}` whether the
+signature was absent, malformed, stale or wrong. The reason goes to the log,
+where the operator can read it and an attacker cannot. Distinguishing "bad
+timestamp" from "bad signature" in the response tells someone probing the
+endpoint exactly which half of the header to keep working on.
+
+The timestamp is checked *before* the hash is computed, and is bound into the
+hashed string — a captured header with a fresh `t=` fails, because the `t` is
+part of what was signed. There is a test for precisely that, since it is the
+first thing anyone with a captured request would try.
+
+**Reversing any of this** is a few lines in one middleware and one controller.
+The fail-closed default is the one worth arguing about, and the argument should
+happen before it is changed, not after.
