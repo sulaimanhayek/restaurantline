@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\SpokenTime;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Database\Factories\MenuCategoryFactory;
@@ -111,7 +112,7 @@ class MenuCategory extends Model
 
     /**
      * How the window reads out loud, for the agent to explain a refusal:
-     * "the lunch menu is served 12:00 to 15:00".
+     * "the lunch menu is served midday to 3pm".
      */
     public function spokenAvailability(): ?string
     {
@@ -119,10 +120,6 @@ class MenuCategory extends Model
             return null;
         }
 
-        return sprintf(
-            '%s to %s',
-            substr((string) $this->available_from, 0, 5),
-            substr((string) $this->available_until, 0, 5),
-        );
+        return SpokenTime::range((string) $this->available_from, (string) $this->available_until);
     }
 }

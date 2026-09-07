@@ -53,9 +53,14 @@ return new class extends Migration
         });
 
         // Trigram index on the item name, so the fuzzy fallback in the menu
-        // matcher stays fast as the menu grows. Aliases are matched in PHP
-        // against a cached menu rather than in SQL, because a GIN index over a
-        // jsonb array of text does not support similarity search directly.
+        // matcher stays fast as the menu grows.
+        //
+        // Aliases are scored in the same query but cannot use this index: they
+        // are unnested out of a jsonb array at query time, and a GIN trigram
+        // index does not reach inside one. On a menu of a few hundred items
+        // that scan is sub-millisecond, and the alternative — a separate
+        // aliases table purely to hold an index — costs the menu importer and
+        // the Filament resource more than it saves.
         if (DB::getDriverName() === 'pgsql') {
             DB::statement('CREATE INDEX menu_items_name_trgm_index ON menu_items USING gin (name gin_trgm_ops)');
         }

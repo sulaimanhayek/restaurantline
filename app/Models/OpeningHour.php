@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Support\SpokenTime;
 use Carbon\CarbonImmutable;
 use Database\Factories\OpeningHourFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -57,38 +58,11 @@ class OpeningHour extends Model
     }
 
     /**
-     * How this window reads out loud: "half past eleven to eleven at night" is
-     * beyond us, but "11:30 to 23:00" is unambiguous and speech engines handle
-     * it well.
+     * How this window reads out loud: "5pm to 10:30pm".
      */
     public function spoken(): string
     {
-        return sprintf('%s to %s', $this->spokenTime($this->opens_at), $this->spokenTime($this->closes_at));
-    }
-
-    /**
-     * "17:00" reads as "seventeen hundred" or worse. Nobody on a takeaway line
-     * says that, so shifts are spoken the way a person answering the phone
-     * would say them: "5pm", "half past ten", "midnight".
-     */
-    private function spokenTime(string $time): string
-    {
-        [$hour, $minute] = array_map(intval(...), explode(':', $time));
-
-        if ($hour === 0 && $minute === 0) {
-            return 'midnight';
-        }
-
-        if ($hour === 12 && $minute === 0) {
-            return 'midday';
-        }
-
-        $meridiem = $hour < 12 ? 'am' : 'pm';
-        $twelveHour = $hour % 12 === 0 ? 12 : $hour % 12;
-
-        return $minute === 0
-            ? sprintf('%d%s', $twelveHour, $meridiem)
-            : sprintf('%d:%02d%s', $twelveHour, $minute, $meridiem);
+        return SpokenTime::range($this->opens_at, $this->closes_at);
     }
 
     public function dayName(): string
