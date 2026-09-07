@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
@@ -57,8 +58,8 @@ class MenuItem extends Model
             'spoken_aliases' => 'array',
             'sort_order' => 'integer',
             'prep_minutes' => 'integer',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 
@@ -159,6 +160,47 @@ class MenuItem extends Model
     public function isOrderableAt(CarbonInterface $at): bool
     {
         return $this->is_available && $this->category->isAvailableAt($at);
+    }
+
+    /**
+     * Why this item cannot be ordered right now, phrased for saying out loud.
+     *
+     * Null means it can. The two reasons are kept distinct because they lead
+     * the conversation in opposite directions: "we've run out" ends it, and
+     * "that's lunch only" invites the caller back at noon.
+     */
+    public function unavailableReason(CarbonInterface $at): ?string
+    {
+        if (! $this->is_available) {
+            return 'sold out';
+        }
+
+        if (! $this->category->isAvailableAt($at)) {
+            $window = $this->category->spokenAvailability();
+
+            return $window === null
+                ? sprintf('not served right now (%s)', mb_strtolower($this->category->name))
+                : sprintf('only served %s', $window);
+        }
+
+        return null;
+    }
+
+    /**
+     * Is this modifier orderable on this item?
+     *
+     * The pivot can switch a modifier off for one item without touching it
+     * anywhere else — a burger that comes with no bacon option while every
+     * other burger keeps it.
+     */
+    public function resolvedModifierAvailability(Modifier $modifier): bool
+    {
+        $override = $this->modifierOverrides
+            ->firstWhere('id', $modifier->id)
+            ?->getAttribute('pivot')
+            ?->getAttribute('is_available_override');
+
+        return $override !== null ? (bool) $override : $modifier->is_available;
     }
 
     /**

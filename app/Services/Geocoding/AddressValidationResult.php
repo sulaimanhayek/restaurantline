@@ -91,6 +91,19 @@ final readonly class AddressValidationResult
     }
 
     /**
+     * The candidates worth reading out when the agent has to ask which.
+     *
+     * Capped, because a list of five addresses read down a phone is not a
+     * question anyone can answer.
+     *
+     * @return list<AddressCandidate>
+     */
+    public function alternatives(int $limit = 3): array
+    {
+        return array_slice($this->candidates, 0, $limit);
+    }
+
+    /**
      * Candidates the restaurant would actually deliver to.
      *
      * @return list<AddressCandidate>

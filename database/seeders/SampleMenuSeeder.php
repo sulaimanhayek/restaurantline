@@ -172,13 +172,16 @@ class SampleMenuSeeder extends Seeder
             );
 
             foreach ($modifiers as $index => [$modName, $delta, $kind, $aliases, $isDefault]) {
+                // Keyed on restaurant and slug alone, matching the unique
+                // index (#0018). Including the group would mean moving a
+                // modifier between groups collided with itself on re-seed.
                 Modifier::query()->updateOrCreate(
                     [
                         'restaurant_id' => $restaurant->id,
-                        'modifier_group_id' => $group->id,
                         'slug' => Str::slug($modName),
                     ],
                     [
+                        'modifier_group_id' => $group->id,
                         'name' => $modName,
                         'price_delta' => $delta,
                         'kind' => $kind,

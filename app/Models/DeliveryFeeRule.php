@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use Carbon\CarbonImmutable;
 use Database\Factories\DeliveryFeeRuleFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -46,8 +47,8 @@ class DeliveryFeeRule extends Model
             'fee' => 'integer',
             'free_over_subtotal' => 'integer',
             'sort_order' => 'integer',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 

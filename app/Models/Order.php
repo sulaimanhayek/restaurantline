@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Enums\FulfilmentType;
 use App\Enums\OrderSource;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentStatus;
 use App\Support\Money;
+use App\Support\SpokenTime;
 use Carbon\CarbonImmutable;
 use Database\Factories\OrderFactory;
 use Illuminate\Database\Eloquent\Builder;
@@ -68,6 +70,13 @@ class Order extends Model
     /** @use HasFactory<OrderFactory> */
     use HasFactory;
 
+    /**
+     * Past this many minutes, a wait is read out as a clock time rather than
+     * as a duration. Two hours is comfortably longer than any real prep time
+     * and short enough that nothing absurd gets said.
+     */
+    private const SPOKEN_WAIT_CEILING_MINUTES = 120;
+
     protected $guarded = [];
 
     /**
@@ -84,15 +93,15 @@ class Order extends Model
             'delivery_fee' => 'integer',
             'total' => 'integer',
             'estimated_minutes' => 'integer',
-            'requested_at' => 'immutable_datetime',
-            'estimated_ready_at' => 'immutable_datetime',
-            'confirmed_at' => 'immutable_datetime',
-            'accepted_at' => 'immutable_datetime',
-            'ready_at' => 'immutable_datetime',
-            'completed_at' => 'immutable_datetime',
-            'cancelled_at' => 'immutable_datetime',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'requested_at' => UtcDateTime::class,
+            'estimated_ready_at' => UtcDateTime::class,
+            'confirmed_at' => UtcDateTime::class,
+            'accepted_at' => UtcDateTime::class,
+            'ready_at' => UtcDateTime::class,
+            'completed_at' => UtcDateTime::class,
+            'cancelled_at' => UtcDateTime::class,
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 
@@ -171,6 +180,51 @@ class Order extends Model
     public function deliveryFeeMoney(): Money
     {
         return Money::of($this->delivery_fee, $this->restaurant->currency);
+    }
+
+    /**
+     * "free", not "0 pounds". See PricedOrder::spokenDeliveryFee().
+     */
+    public function spokenDeliveryFee(): string
+    {
+        return $this->delivery_fee === 0 ? 'free' : $this->deliveryFeeMoney()->spoken();
+    }
+
+    /**
+     * How long the caller is waiting, said the way they need to hear it.
+     *
+     * A count of minutes is right for a normal order and wrong past a couple
+     * of hours: nobody hears "about a hundred and eighty minutes" as three
+     * o'clock, and an order taken while the kitchen is shut produces numbers
+     * like 1026. Beyond the ceiling the clock time is what a person would
+     * say, with the day attached once it is no longer today.
+     *
+     * The preposition travels with the phrase, because "in about 20 minutes"
+     * and "tomorrow, around midday" do not take the same one.
+     */
+    public function spokenWait(): string
+    {
+        $readyAt = $this->estimated_ready_at;
+
+        if ($readyAt === null) {
+            return 'shortly';
+        }
+
+        $now = $this->restaurant->now();
+        $readyAt = $readyAt->copy()->setTimezone($this->restaurant->timezone);
+        $minutes = (int) $this->estimated_minutes;
+
+        if ($minutes <= self::SPOKEN_WAIT_CEILING_MINUTES) {
+            return sprintf('in about %d minutes', max(1, $minutes));
+        }
+
+        $time = SpokenTime::of($readyAt->format('H:i'));
+
+        return match (true) {
+            $readyAt->isSameDay($now) => sprintf('later today, around %s', $time),
+            $readyAt->isSameDay($now->addDay()) => sprintf('tomorrow, around %s', $time),
+            default => sprintf('on %s, around %s', $readyAt->format('l'), $time),
+        };
     }
 
     public function totalMoney(): Money

@@ -56,6 +56,19 @@ final readonly class PricedOrder
         return Money::of($this->shortfall, $this->currency);
     }
 
+    /**
+     * The delivery fee as a sentence, not as a quantity.
+     *
+     * Money::spoken() renders zero as "0 pounds", which is arithmetically
+     * correct and not a thing anyone says. A caller told their delivery is
+     * "zero pounds" hears a system reading a field out; a caller told it is
+     * "free" hears a person.
+     */
+    public function spokenDeliveryFee(): string
+    {
+        return $this->deliveryFee === 0 ? 'free' : $this->deliveryFeeMoney()->spoken();
+    }
+
     public function isEmpty(): bool
     {
         return $this->lines === [];
@@ -105,6 +118,7 @@ final readonly class PricedOrder
     {
         return [
             'items' => array_map(static fn (PricedLine $line): array => [
+                'item' => $line->menuItemSlug,
                 'name' => $line->name,
                 'quantity' => $line->quantity,
                 'modifiers' => array_map(
@@ -117,7 +131,7 @@ final readonly class PricedOrder
             'subtotal' => $this->subtotal,
             'subtotal_spoken' => $this->subtotalMoney()->spoken(),
             'delivery_fee' => $this->deliveryFee,
-            'delivery_fee_spoken' => $this->deliveryFeeMoney()->spoken(),
+            'delivery_fee_spoken' => $this->spokenDeliveryFee(),
             'total' => $this->total,
             'total_spoken' => $this->totalMoney()->spoken(),
             'currency' => $this->currency,

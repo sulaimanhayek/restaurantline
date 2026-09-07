@@ -389,3 +389,235 @@ and a flat at the same address, the case where the agent most needs to ask.
 
 Four decimal places is not arbitrary: it is the precision both services round
 their confidences to, so nothing below it was ever meaningful.
+
+---
+
+## 0015 — The cart is stateless; the server holds nothing until an order exists
+
+`POST /quote` and `POST /orders` each take the whole cart in the request body.
+There is no server-side session, no draft row and no cached cart keyed by
+conversation. The first thing the server persists is the order itself, created
+in `confirming`.
+
+The agent already holds the conversation in its context — it has to, to talk —
+so asking it to resend a structure it is already holding costs a few hundred
+tokens and buys three things: every tool call is independently testable with
+`curl`, every tool call is safe to retry, and there is no draft lifecycle to
+build (expiry, orphan cleanup, abandoned carts cluttering the dashboard).
+
+The cost is real: a caller who says "actually make that two" makes the agent
+rebuild and resend the cart, and a long order sends a growing payload on every
+quote. For a takeaway order — rarely more than a dozen lines — that is cheap.
+
+**Reversing it** toward a server-held draft means adding endpoints, not
+changing existing ones: `/quote` and `/orders` would keep working as they are.
+
+---
+
+## 0016 — Responses carry `_spoken` companions, and `say` only where the endpoint's job is an utterance
+
+Every money, distance and time field in an agent response is paired with a
+ready-to-read string:
+
+```json
+{ "total": 2549, "total_spoken": "25 pounds 49" }
+```
+
+A language model asked to read `2549` aloud will eventually say "two thousand
+five hundred and forty nine", and money is the worst possible place to discover
+that. Pairing the fields means the machine-readable value and the spoken value
+can never disagree, because one is derived from the other.
+
+A composed `say` sentence is returned only by the three endpoints whose entire
+purpose is to produce an utterance — the quote read-back, the order
+confirmation, and the escalation hand-off. Everywhere else the model composes
+its own sentence from the data, so a forker restyling the agent's voice edits
+the Blade prompt template rather than a controller.
+
+**Reversing it** in either direction is a per-endpoint change, not a contract
+rewrite: adding `say` to an endpoint is additive, and ignoring it costs nothing.
+
+---
+
+## 0017 — A domain failure is HTTP 200 with `ok: false`
+
+"We don't sell sushi", "that address is outside our delivery area" and "that's
+below our minimum" are not errors. They are ordinary things that happen in an
+ordinary phone call, and the agent needs a sentence for each of them.
+
+So every agent endpoint returns HTTP 200 with a body of the shape
+
+```json
+{ "ok": false, "error": { "code": "outside_delivery_area", "say": "..." } }
+```
+
+for anything the conversation can recover from. Real 4xx is reserved for the
+three things that are genuinely wrong with the *request* rather than with the
+order: a bad or missing bearer token (401), a malformed payload (422), and rate
+limiting (429).
+
+This also insures against a platform detail we have not verified: if
+ElevenLabs does not surface a non-2xx response body to the model, a 404 becomes
+a generic tool failure and the caller hears the agent stall. A 200 always
+reaches the model with a sentence in it.
+
+**Unhandled exceptions are the exception.** They return HTTP 500 — a real
+server error should be visible as one to monitoring — but with the same safe
+JSON body and never a stack trace, which is a constraint the README states and
+a test enforces.
+
+---
+
+## 0018 — The agent refers to menu items and modifiers by slug
+
+`{"item": "ember-chicken-burger"}`, not `{"item": 47}`.
+
+A hallucinated integer is still a valid integer: 47 instead of 48 silently
+orders the wrong dish, and neither the transcript nor the ticket gives anyone a
+clue. A hallucinated slug almost always fails to resolve, which turns a silent
+wrong order into a loud "I couldn't find that" the agent can recover from. Slugs
+also make the transcript, the request log and the eval fixtures readable without
+a database to hand.
+
+This required one pre-release change: modifier slugs were unique per modifier
+group and are now unique per restaurant. The migration was edited in place
+rather than superseded, because nobody has run it anywhere yet and a forker's
+first `php artisan migrate` should not replay a correction to a schema that has
+never shipped.
+
+**Reversing it** means changing the resolver in `CartAssembler` and the tool
+schemas the provisioning command generates. The database is untouched either
+way — both columns exist regardless.
+
+---
+
+## 0019 — A confirmed address travels as a signed token, not as free text
+
+`POST /address/validate` persists nothing. It returns each candidate with an
+opaque `address_token`: the geocoded attributes, signed with the application key
+and stamped with an issue time.
+
+`POST /orders` will not accept a delivery address any other way. It verifies the
+signature, rejects a token older than the configured TTL, writes the `Address`
+row itself, and sets `verified_at` only when the agent also passes
+`address_confirmed: true`.
+
+Two different guarantees, deliberately separated:
+
+- **The signature** proves the address came out of the geocoder rather than out
+  of the model. Without it a hallucinated street reaches a driver, and the whole
+  address-validation step becomes theatre — the agent could simply invent the
+  address it wished the caller had given.
+- **`verified_at`** records that the agent asserted the caller heard it read
+  back and agreed. Nothing server-side can verify that; it is an assertion, and
+  it is stored as one, timestamped, so a disputed delivery can be traced to the
+  turn in the transcript where it was made.
+
+The alternative — a tenth endpoint, `POST /address/confirm` — was rejected to
+keep the tool count at nine. Every extra tool is another thing in the agent's
+context, another schema to provision, and another opportunity for it to be
+called in the wrong order.
+
+**Reversing it** is contained to `AddressToken` and the order-creation
+controller.
+
+---
+
+## 0020 — `POST /orders` refuses an order when the kitchen is closed
+
+`POST /availability` has always answered honestly about whether the restaurant
+is open. `POST /orders` did not check, and that turned out to matter: it is the
+endpoint that must not depend on the agent having called the other one first.
+
+Found by running the thing. An order taken at 09:00 for a kitchen that opens at
+17:00 rolled silently forward to the next opening, and the agent read the wait
+out as "about 1026 minutes". Nothing errored; the caller was simply told a
+number no human would say, for food that would arrive that evening.
+
+Two changes, because the absurd case and the merely bad case are different:
+
+- A closed kitchen is refused outright, with `restaurant_closed` and a sentence
+  naming the next opening. Scheduled orders are not in scope, and quietly
+  inventing one on a caller's behalf is worse than declining.
+- Past roughly two hours, a wait is spoken as a clock time rather than a count
+  of minutes — "around 4pm", not "about 180 minutes". A legitimately open
+  kitchen with a long prep time still produces a number nobody says out loud.
+
+**Reversing it** — to support scheduled orders — means removing the check and
+giving the endpoint an explicit `scheduled_for`, not letting the rollover come
+back implicitly.
+
+---
+
+## 0021 — Datetime columns are cast through `UtcDateTime`, not Laravel's `datetime`
+
+Every timestamp column in this schema is `timestamp without time zone`. The
+database holds bare digits; the application supplies the convention that they
+mean UTC. Laravel's `datetime` cast does not enforce that convention on write —
+it formats whatever Carbon it is handed, offset and all, and throws the offset
+away.
+
+That is harmless while everything is written from `now()`, which is UTC. It
+stops being harmless the moment a restaurant-local time is stored, and this
+application deals in restaurant-local time constantly: opening hours, prep
+estimates, and everything a caller is told are all local by nature.
+
+Found by running the thing. A ready time of 16:00 in London went into the
+column as the digits "16:00" and came back out as 16:00 UTC — an hour late. The
+order said five o'clock, the API's `estimated_ready_at` was wrong, the spoken
+wait was wrong, and the kitchen display would have counted down to the wrong
+minute. Nothing anywhere threw.
+
+`App\Casts\UtcDateTime` converts on the way in and reads the same convention
+back out. It is applied to every `datetime` cast in every model rather than to
+the columns known to be affected, because the fragile fix is the one that
+reintroduces the bug the next time a local time meets a column: "a datetime
+column holds a true instant" should be true by construction, not by a list
+somebody has to maintain.
+
+Deliberately **not** applied to `date` columns. Converting a local midnight to
+UTC lands it at 23:00 the day before, so a date column would store the wrong
+day — and `OpeningHourOverride::$date` on the wrong day is a full day of orders
+taken for a kitchen nobody is standing in. That cast stays `immutable_date`,
+and a test pins it.
+
+**Reversing it** means switching the columns to `timestamptz` and dropping the
+cast, which is a defensible thing for a fork to do. It is not the default here
+because `timestamptz` behaviour varies by driver and the point of the cast is
+that the guarantee does not depend on one.
+
+---
+
+## 0022 — The address token carries the caller's words as well as the geocoder's
+
+The sealed address token holds two strings that look redundant and are not.
+
+`spoken` is the tidy readback — "3 Hanbury Street, London, E1 6QR" — which is
+what the agent says out loud. `raw_spoken` is what the caller actually said,
+including the part the geocoder discarded: the "second door past the chippy,
+blue gate" that no coordinate will ever capture.
+
+`Address::$raw_spoken_text` is meant to be that second one, kept forever,
+because it is the only record of what a caller said when a delivery goes wrong.
+Before this it stored the geocoder's rendering, which is the one thing already
+recoverable from the other columns.
+
+**Reversing it** is one key in the token payload and one line in the
+order-creation controller.
+
+---
+
+## 0023 — Token expiry runs on Carbon's clock, not `time()`
+
+`AddressToken` stamped and checked its TTL with `time()`, which no clock in the
+application controls. The TTL was therefore unreachable from a test: travelling
+an hour forward moved Carbon and left `time()` where it was, so an expired
+token was still accepted and the test that found this passed for the wrong
+reason in both directions.
+
+Both ends now use `now()->getTimestamp()`. Identical in production, and the
+expiry is something a test can actually watch fire.
+
+The general form of this, worth stating once: a clock the test suite cannot
+move is a branch the test suite cannot reach. Anything in this repo that
+expires, times out, or schedules should read the time through Carbon.

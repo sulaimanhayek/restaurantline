@@ -18,6 +18,7 @@ final readonly class PricedModifier
 {
     public function __construct(
         public ?int $modifierId,
+        public ?string $modifierSlug,
         public ?int $modifierGroupId,
         public ?string $groupName,
         public string $name,
@@ -82,6 +83,7 @@ final readonly class PricedModifier
     {
         return [
             'modifier_id' => $this->modifierId,
+            'modifier' => $this->modifierSlug,
             'modifier_group_id' => $this->modifierGroupId,
             'group_name' => $this->groupName,
             'name' => $this->name,

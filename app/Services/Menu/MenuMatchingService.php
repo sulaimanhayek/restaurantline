@@ -170,7 +170,7 @@ final class MenuMatchingService
                     confidence: round($score, 4),
                     matchedTerm: $modifier->name,
                     priceDelta: $item->resolvedPriceDelta($modifier),
-                    isAvailable: $this->modifierIsAvailable($item, $modifier),
+                    isAvailable: $item->resolvedModifierAvailability($modifier),
                 );
             }
         }
@@ -198,16 +198,6 @@ final class MenuMatchingService
         return $negated
             ? $modifier->kind === ModifierKind::Removal
             : $modifier->kind !== ModifierKind::Removal;
-    }
-
-    private function modifierIsAvailable(MenuItem $item, Modifier $modifier): bool
-    {
-        $override = $item->modifierOverrides
-            ->firstWhere('id', $modifier->id)
-            ?->getAttribute('pivot')
-            ?->getAttribute('is_available_override');
-
-        return $override !== null ? (bool) $override : $modifier->is_available;
     }
 
     /**
@@ -341,19 +331,9 @@ final class MenuMatchingService
      */
     private function availability(MenuItem $item, CarbonInterface $at): array
     {
-        if (! $item->is_available) {
-            return [false, 'sold out'];
-        }
+        $reason = $item->unavailableReason($at);
 
-        if (! $item->category->isAvailableAt($at)) {
-            $window = $item->category->spokenAvailability();
-
-            return [false, $window === null
-                ? sprintf('not served right now (%s)', mb_strtolower($item->category->name))
-                : sprintf('only served %s', $window)];
-        }
-
-        return [true, null];
+        return [$reason === null, $reason];
     }
 
     private function emptyResult(string $query, string $normalised): MenuMatchResult

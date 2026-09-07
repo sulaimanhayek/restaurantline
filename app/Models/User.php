@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use Carbon\CarbonImmutable;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -59,10 +60,10 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'email_verified_at' => 'immutable_datetime',
+            'email_verified_at' => UtcDateTime::class,
             'password' => 'hashed',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 

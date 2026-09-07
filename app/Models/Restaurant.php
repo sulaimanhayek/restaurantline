@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Database\Factories\RestaurantFactory;
@@ -84,9 +85,9 @@ class Restaurant extends Model
             'delivery_prep_minutes' => 'integer',
             'is_accepting_orders' => 'boolean',
             'elevenlabs_tool_ids' => 'array',
-            'provisioned_at' => 'immutable_datetime',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'provisioned_at' => UtcDateTime::class,
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 

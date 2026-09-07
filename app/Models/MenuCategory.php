@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Support\SpokenTime;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
@@ -55,8 +56,8 @@ class MenuCategory extends Model
             'sort_order' => 'integer',
             'is_active' => 'boolean',
             'available_days' => 'array',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 

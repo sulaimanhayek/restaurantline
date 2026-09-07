@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Enums\ConversationDirection;
 use App\Enums\ConversationOutcome;
 use Carbon\CarbonImmutable;
@@ -64,9 +65,9 @@ class Conversation extends Model
         return [
             'direction' => ConversationDirection::class,
             'outcome' => ConversationOutcome::class,
-            'started_at' => 'immutable_datetime',
-            'ended_at' => 'immutable_datetime',
-            'reviewed_at' => 'immutable_datetime',
+            'started_at' => UtcDateTime::class,
+            'ended_at' => UtcDateTime::class,
+            'reviewed_at' => UtcDateTime::class,
             'duration_seconds' => 'integer',
             'transcript' => 'array',
             'analysis' => 'array',
@@ -74,8 +75,8 @@ class Conversation extends Model
             'needs_review' => 'boolean',
             'cost' => 'integer',
             'cost_credits' => 'integer',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 

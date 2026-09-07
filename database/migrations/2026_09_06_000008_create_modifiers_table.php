@@ -48,7 +48,11 @@ return new class extends Migration
 
             $table->timestamps();
 
-            $table->unique(['modifier_group_id', 'slug']);
+            // Unique per restaurant, not per group: the agent refers to a
+            // modifier by slug on the wire (#0018), so two groups cannot both
+            // own an "onions". Tightened before release, in place, so a
+            // forker's first migrate does not replay a correction.
+            $table->unique(['restaurant_id', 'slug']);
             $table->index(['restaurant_id', 'kind']);
         });
     }

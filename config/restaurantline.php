@@ -39,6 +39,15 @@ return [
     'agent' => [
         'token' => env('AGENT_API_TOKEN'),
         'rate_limit_per_minute' => (int) env('AGENT_RATE_LIMIT_PER_MINUTE', 120),
+
+        /*
+         * How long a sealed address from /address/validate stays usable.
+         *
+         * It only has to outlive one phone call. An hour is generous for that
+         * and short enough that a token scraped from a log is worthless by the
+         * time anyone reads it.
+         */
+        'address_token_ttl' => (int) env('AGENT_ADDRESS_TOKEN_TTL', 3600),
     ],
 
     /*
