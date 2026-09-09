@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Database\Factories\RestaurantFactory;
@@ -84,9 +85,9 @@ class Restaurant extends Model
             'delivery_prep_minutes' => 'integer',
             'is_accepting_orders' => 'boolean',
             'elevenlabs_tool_ids' => 'array',
-            'provisioned_at' => 'immutable_datetime',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'provisioned_at' => UtcDateTime::class,
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 
@@ -218,5 +219,17 @@ class Restaurant extends Model
     public static function current(): self
     {
         return self::query()->orderBy('id')->firstOrFail();
+    }
+
+    /**
+     * The same, for the handful of callers that run before there is one.
+     *
+     * Sign-in is the case that matters: `RESTAURANTLINE_SEED_ON_BOOT=false`
+     * gives an install with a user and no restaurant, and a login page that
+     * throws a ModelNotFoundException is a bad first five minutes.
+     */
+    public static function currentOrNull(): ?self
+    {
+        return self::query()->orderBy('id')->first();
     }
 }

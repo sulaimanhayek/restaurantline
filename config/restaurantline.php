@@ -39,6 +39,15 @@ return [
     'agent' => [
         'token' => env('AGENT_API_TOKEN'),
         'rate_limit_per_minute' => (int) env('AGENT_RATE_LIMIT_PER_MINUTE', 120),
+
+        /*
+         * How long a sealed address from /address/validate stays usable.
+         *
+         * It only has to outlive one phone call. An hour is generous for that
+         * and short enough that a token scraped from a log is worthless by the
+         * time anyone reads it.
+         */
+        'address_token_ttl' => (int) env('AGENT_ADDRESS_TOKEN_TTL', 3600),
     ],
 
     /*
@@ -132,6 +141,16 @@ return [
         'voice_id' => env('ELEVENLABS_VOICE_ID'),
         'webhook_secret' => env('ELEVENLABS_WEBHOOK_SECRET'),
         'webhook_tolerance' => (int) env('ELEVENLABS_WEBHOOK_TOLERANCE', 1800),
+
+        /*
+         * Where call recordings are written.
+         *
+         * Local by default so `docker compose up` works with no cloud account.
+         * Point this at s3 before a real restaurant uses it: recordings are the
+         * largest thing this application stores and the one thing it cannot
+         * regenerate.
+         */
+        'audio_disk' => env('ELEVENLABS_AUDIO_DISK', 'local'),
     ],
 
     /*

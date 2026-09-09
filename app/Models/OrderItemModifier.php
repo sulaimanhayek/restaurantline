@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Enums\ModifierKind;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
@@ -54,8 +55,8 @@ class OrderItemModifier extends Model
             'price_delta' => 'integer',
             'quantity' => 'integer',
             'sort_order' => 'integer',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 

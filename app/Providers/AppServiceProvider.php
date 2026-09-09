@@ -7,6 +7,9 @@ namespace App\Providers;
 use App\Services\Geocoding\FakeGeocoder;
 use App\Services\Geocoding\Geocoder;
 use App\Services\Geocoding\GoogleGeocoder;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
 
@@ -41,6 +44,38 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        //
+        $this->registerAgentRateLimiter();
+    }
+
+    /**
+     * Two ceilings on the agent tool endpoints, and they do different jobs.
+     *
+     * The per-conversation limit is the one that matters day to day. An agent
+     * that gets into a loop — searching the menu for the same misheard word
+     * over and over — burns tool calls fast, and the limit stops that one call
+     * without taking the phone line down for everybody else. Keying on the IP
+     * would do the opposite: ElevenLabs calls from shared infrastructure, so
+     * every conversation shares an address and one bad call would throttle the
+     * lot.
+     *
+     * The global ceiling is the backstop for the case the first limit cannot
+     * see — a caller varying `conversation_id` on every request. The token is
+     * the real protection there; this just caps how expensive it can get.
+     */
+    private function registerAgentRateLimiter(): void
+    {
+        RateLimiter::for('agent', function (Request $request): array {
+            $perMinute = (int) config('restaurantline.agent.rate_limit_per_minute', 120);
+            $conversation = $request->input('conversation_id');
+
+            return [
+                Limit::perMinute($perMinute)->by(
+                    is_string($conversation) && $conversation !== ''
+                        ? 'conversation:'.$conversation
+                        : 'ip:'.$request->ip(),
+                ),
+                Limit::perMinute($perMinute * 10)->by('agent-global'),
+            ];
+        });
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Enums\GeocodeProvider;
 use Carbon\CarbonImmutable;
 use Database\Factories\AddressFactory;
@@ -59,11 +60,11 @@ class Address extends Model
             'longitude' => 'float',
             'geocode_confidence' => 'float',
             'geocode_provider' => GeocodeProvider::class,
-            'verified_at' => 'immutable_datetime',
+            'verified_at' => UtcDateTime::class,
             'distance_metres' => 'integer',
             'is_default' => 'boolean',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 

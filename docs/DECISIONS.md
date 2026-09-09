@@ -183,6 +183,45 @@ a test fixture and a `FakeElevenLabsSignature` helper so this can be re-verified
 in minutes once a live webhook is available. **Re-check this before shipping to
 a real restaurant.**
 
+### Post-call payload fields, verified 2026-09-07
+
+The envelope was recorded above on 2026-09-06; the fields inside `data` were
+checked against the live documentation a day later, while writing the job that
+reads them. Several are not where a reasonable person would guess, and a reader
+that guesses wrong fails silently — every column involved is nullable, so a
+wrong field name costs data rather than an exception.
+
+`post_call_transcription.data`:
+
+- `conversation_id`, `agent_id`, `agent_name`, `status`
+- `transcript[]` — per turn: `role`, `message`, `tool_calls`, `tool_results`,
+  `time_in_call_secs`, `conversation_turn_metrics`, `feedback`
+- `metadata` — `start_time_unix_secs`, `call_duration_secs`, `cost`,
+  `termination_reason`, `authorization_method`, `charging`, `deletion_settings`
+- `analysis` — `call_successful`, `transcript_summary`,
+  `evaluation_criteria_results`, `data_collection_results`
+- `conversation_initiation_client_data` — including `dynamic_variables`
+- `has_audio`, `has_user_audio`, `has_response_audio`
+
+`post_call_audio.data` is `agent_id`, `conversation_id` and `full_audio`, a
+base64-encoded MP3. `call_initiation_failure.data` is `agent_id`,
+`conversation_id`, `failure_reason` (`busy`, `no-answer` or `unknown`) and a
+`metadata` block carrying the provider's own payload.
+
+Three that cost time:
+
+1. **The caller's number is not a top-level field.** It arrives as the
+   `system__caller_id` dynamic variable, nested inside
+   `conversation_initiation_client_data.dynamic_variables`. The siblings are
+   `system__called_number`, `system__conversation_id`, `system__agent_id`,
+   `system__call_duration_secs` and `system__call_sid`.
+2. **The summary is `analysis.transcript_summary`**, not `call_summary`.
+3. **Cost is `metadata.cost`**, in credits, not currency.
+
+There is no end timestamp. `ended_at` is computed from
+`start_time_unix_secs + call_duration_secs`, which is why a payload missing
+either leaves it null rather than guessing.
+
 ### Twilio phone number attachment is UI-only in the documented flow
 
 The native Twilio integration page documents importing a number through the
@@ -389,3 +428,570 @@ and a flat at the same address, the case where the agent most needs to ask.
 
 Four decimal places is not arbitrary: it is the precision both services round
 their confidences to, so nothing below it was ever meaningful.
+
+---
+
+## 0015 — The cart is stateless; the server holds nothing until an order exists
+
+`POST /quote` and `POST /orders` each take the whole cart in the request body.
+There is no server-side session, no draft row and no cached cart keyed by
+conversation. The first thing the server persists is the order itself, created
+in `confirming`.
+
+The agent already holds the conversation in its context — it has to, to talk —
+so asking it to resend a structure it is already holding costs a few hundred
+tokens and buys three things: every tool call is independently testable with
+`curl`, every tool call is safe to retry, and there is no draft lifecycle to
+build (expiry, orphan cleanup, abandoned carts cluttering the dashboard).
+
+The cost is real: a caller who says "actually make that two" makes the agent
+rebuild and resend the cart, and a long order sends a growing payload on every
+quote. For a takeaway order — rarely more than a dozen lines — that is cheap.
+
+**Reversing it** toward a server-held draft means adding endpoints, not
+changing existing ones: `/quote` and `/orders` would keep working as they are.
+
+---
+
+## 0016 — Responses carry `_spoken` companions, and `say` only where the endpoint's job is an utterance
+
+Every money, distance and time field in an agent response is paired with a
+ready-to-read string:
+
+```json
+{ "total": 2549, "total_spoken": "25 pounds 49" }
+```
+
+A language model asked to read `2549` aloud will eventually say "two thousand
+five hundred and forty nine", and money is the worst possible place to discover
+that. Pairing the fields means the machine-readable value and the spoken value
+can never disagree, because one is derived from the other.
+
+A composed `say` sentence is returned only by the three endpoints whose entire
+purpose is to produce an utterance — the quote read-back, the order
+confirmation, and the escalation hand-off. Everywhere else the model composes
+its own sentence from the data, so a forker restyling the agent's voice edits
+the Blade prompt template rather than a controller.
+
+**Reversing it** in either direction is a per-endpoint change, not a contract
+rewrite: adding `say` to an endpoint is additive, and ignoring it costs nothing.
+
+---
+
+## 0017 — A domain failure is HTTP 200 with `ok: false`
+
+"We don't sell sushi", "that address is outside our delivery area" and "that's
+below our minimum" are not errors. They are ordinary things that happen in an
+ordinary phone call, and the agent needs a sentence for each of them.
+
+So every agent endpoint returns HTTP 200 with a body of the shape
+
+```json
+{ "ok": false, "error": { "code": "outside_delivery_area", "say": "..." } }
+```
+
+for anything the conversation can recover from. Real 4xx is reserved for the
+three things that are genuinely wrong with the *request* rather than with the
+order: a bad or missing bearer token (401), a malformed payload (422), and rate
+limiting (429).
+
+This also insures against a platform detail we have not verified: if
+ElevenLabs does not surface a non-2xx response body to the model, a 404 becomes
+a generic tool failure and the caller hears the agent stall. A 200 always
+reaches the model with a sentence in it.
+
+**Unhandled exceptions are the exception.** They return HTTP 500 — a real
+server error should be visible as one to monitoring — but with the same safe
+JSON body and never a stack trace, which is a constraint the README states and
+a test enforces.
+
+---
+
+## 0018 — The agent refers to menu items and modifiers by slug
+
+`{"item": "ember-chicken-burger"}`, not `{"item": 47}`.
+
+A hallucinated integer is still a valid integer: 47 instead of 48 silently
+orders the wrong dish, and neither the transcript nor the ticket gives anyone a
+clue. A hallucinated slug almost always fails to resolve, which turns a silent
+wrong order into a loud "I couldn't find that" the agent can recover from. Slugs
+also make the transcript, the request log and the eval fixtures readable without
+a database to hand.
+
+This required one pre-release change: modifier slugs were unique per modifier
+group and are now unique per restaurant. The migration was edited in place
+rather than superseded, because nobody has run it anywhere yet and a forker's
+first `php artisan migrate` should not replay a correction to a schema that has
+never shipped.
+
+**Reversing it** means changing the resolver in `CartAssembler` and the tool
+schemas the provisioning command generates. The database is untouched either
+way — both columns exist regardless.
+
+---
+
+## 0019 — A confirmed address travels as a signed token, not as free text
+
+`POST /address/validate` persists nothing. It returns each candidate with an
+opaque `address_token`: the geocoded attributes, signed with the application key
+and stamped with an issue time.
+
+`POST /orders` will not accept a delivery address any other way. It verifies the
+signature, rejects a token older than the configured TTL, writes the `Address`
+row itself, and sets `verified_at` only when the agent also passes
+`address_confirmed: true`.
+
+Two different guarantees, deliberately separated:
+
+- **The signature** proves the address came out of the geocoder rather than out
+  of the model. Without it a hallucinated street reaches a driver, and the whole
+  address-validation step becomes theatre — the agent could simply invent the
+  address it wished the caller had given.
+- **`verified_at`** records that the agent asserted the caller heard it read
+  back and agreed. Nothing server-side can verify that; it is an assertion, and
+  it is stored as one, timestamped, so a disputed delivery can be traced to the
+  turn in the transcript where it was made.
+
+The alternative — a tenth endpoint, `POST /address/confirm` — was rejected to
+keep the tool count at nine. Every extra tool is another thing in the agent's
+context, another schema to provision, and another opportunity for it to be
+called in the wrong order.
+
+**Reversing it** is contained to `AddressToken` and the order-creation
+controller.
+
+---
+
+## 0020 — `POST /orders` refuses an order when the kitchen is closed
+
+`POST /availability` has always answered honestly about whether the restaurant
+is open. `POST /orders` did not check, and that turned out to matter: it is the
+endpoint that must not depend on the agent having called the other one first.
+
+Found by running the thing. An order taken at 09:00 for a kitchen that opens at
+17:00 rolled silently forward to the next opening, and the agent read the wait
+out as "about 1026 minutes". Nothing errored; the caller was simply told a
+number no human would say, for food that would arrive that evening.
+
+Two changes, because the absurd case and the merely bad case are different:
+
+- A closed kitchen is refused outright, with `restaurant_closed` and a sentence
+  naming the next opening. Scheduled orders are not in scope, and quietly
+  inventing one on a caller's behalf is worse than declining.
+- Past roughly two hours, a wait is spoken as a clock time rather than a count
+  of minutes — "around 4pm", not "about 180 minutes". A legitimately open
+  kitchen with a long prep time still produces a number nobody says out loud.
+
+**Reversing it** — to support scheduled orders — means removing the check and
+giving the endpoint an explicit `scheduled_for`, not letting the rollover come
+back implicitly.
+
+---
+
+## 0021 — Datetime columns are cast through `UtcDateTime`, not Laravel's `datetime`
+
+Every timestamp column in this schema is `timestamp without time zone`. The
+database holds bare digits; the application supplies the convention that they
+mean UTC. Laravel's `datetime` cast does not enforce that convention on write —
+it formats whatever Carbon it is handed, offset and all, and throws the offset
+away.
+
+That is harmless while everything is written from `now()`, which is UTC. It
+stops being harmless the moment a restaurant-local time is stored, and this
+application deals in restaurant-local time constantly: opening hours, prep
+estimates, and everything a caller is told are all local by nature.
+
+Found by running the thing. A ready time of 16:00 in London went into the
+column as the digits "16:00" and came back out as 16:00 UTC — an hour late. The
+order said five o'clock, the API's `estimated_ready_at` was wrong, the spoken
+wait was wrong, and the kitchen display would have counted down to the wrong
+minute. Nothing anywhere threw.
+
+`App\Casts\UtcDateTime` converts on the way in and reads the same convention
+back out. It is applied to every `datetime` cast in every model rather than to
+the columns known to be affected, because the fragile fix is the one that
+reintroduces the bug the next time a local time meets a column: "a datetime
+column holds a true instant" should be true by construction, not by a list
+somebody has to maintain.
+
+Deliberately **not** applied to `date` columns. Converting a local midnight to
+UTC lands it at 23:00 the day before, so a date column would store the wrong
+day — and `OpeningHourOverride::$date` on the wrong day is a full day of orders
+taken for a kitchen nobody is standing in. That cast stays `immutable_date`,
+and a test pins it.
+
+**Reversing it** means switching the columns to `timestamptz` and dropping the
+cast, which is a defensible thing for a fork to do. It is not the default here
+because `timestamptz` behaviour varies by driver and the point of the cast is
+that the guarantee does not depend on one.
+
+---
+
+## 0022 — The address token carries the caller's words as well as the geocoder's
+
+The sealed address token holds two strings that look redundant and are not.
+
+`spoken` is the tidy readback — "3 Hanbury Street, London, E1 6QR" — which is
+what the agent says out loud. `raw_spoken` is what the caller actually said,
+including the part the geocoder discarded: the "second door past the chippy,
+blue gate" that no coordinate will ever capture.
+
+`Address::$raw_spoken_text` is meant to be that second one, kept forever,
+because it is the only record of what a caller said when a delivery goes wrong.
+Before this it stored the geocoder's rendering, which is the one thing already
+recoverable from the other columns.
+
+**Reversing it** is one key in the token payload and one line in the
+order-creation controller.
+
+---
+
+## 0023 — Token expiry runs on Carbon's clock, not `time()`
+
+`AddressToken` stamped and checked its TTL with `time()`, which no clock in the
+application controls. The TTL was therefore unreachable from a test: travelling
+an hour forward moved Carbon and left `time()` where it was, so an expired
+token was still accepted and the test that found this passed for the wrong
+reason in both directions.
+
+Both ends now use `now()->getTimestamp()`. Identical in production, and the
+expiry is something a test can actually watch fire.
+
+The general form of this, worth stating once: a clock the test suite cannot
+move is a branch the test suite cannot reach. Anything in this repo that
+expires, times out, or schedules should read the time through Carbon.
+
+---
+
+## 0024 — The post-call webhook fails closed, answers fast, and explains nothing
+
+Three decisions about the webhook boundary, recorded together because they only
+make sense as a set.
+
+**Fail closed when the secret is unset.** `VerifyElevenLabsSignature` rejects
+every request when `ELEVENLABS_WEBHOOK_SECRET` is empty, rather than skipping
+verification. The alternative — treating an unset secret as "verification off"
+— is the shape of most webhook breaches: it works perfectly in development,
+survives review because nobody reads the disabled branch, and ships as an open
+endpoint that writes to the database. A forker who has not set the secret yet
+gets a 401 and a log line saying why, which is a much better first hour than an
+endpoint anyone can post to.
+
+Consequence, stated plainly: the webhook does not work until the secret is set.
+That is the intent. The signature is the only access control this route has —
+there is no session, no token, no IP allowlist.
+
+**Answer in milliseconds, work in a queue.** The controller validates the
+envelope, dispatches `ProcessElevenLabsWebhook`, and returns 200. Nothing else.
+A webhook sender reads a slow response as a failed delivery and sends the
+payload again, so any work done inline is work that buys duplicates of itself
+— and `post_call_audio` carries a whole base64 MP3, which is not a body to
+process while a socket waits.
+
+A signed payload we cannot parse still gets a 200, with `handled: false` in the
+body. It came from ElevenLabs, so it is a shape change rather than an attack,
+and retrying a shape change just delivers the same unreadable thing until the
+sender gives up. The log line is the actionable part.
+
+**The 401 discloses nothing.** The refusal body is `{"ok": false}` whether the
+signature was absent, malformed, stale or wrong. The reason goes to the log,
+where the operator can read it and an attacker cannot. Distinguishing "bad
+timestamp" from "bad signature" in the response tells someone probing the
+endpoint exactly which half of the header to keep working on.
+
+The timestamp is checked *before* the hash is computed, and is bound into the
+hashed string — a captured header with a fresh `t=` fails, because the `t` is
+part of what was signed. There is a test for precisely that, since it is the
+first thing anyone with a captured request would try.
+
+**Reversing any of this** is a few lines in one middleware and one controller.
+The fail-closed default is the one worth arguing about, and the argument should
+happen before it is changed, not after.
+
+---
+
+## 0025 — The dashboard is one Filament panel at `/admin`, and every user model implements `FilamentUser`
+
+Two audiences share this panel and want opposite things. The person who forked
+this repo wants every field on screen, because they are wiring it to a client.
+The person answering the phone at 8pm on a Friday wants tonight's orders and
+nothing else. Where those conflict the second wins: they use it every day.
+
+Concretely that means orders and calls sit at the top of the navigation on
+their own, and everything a restaurant touches once a week — the menu, modifier
+groups, customers, settings — is filed behind a heading. Primary colour is
+amber, which reads as "kitchen" rather than "SaaS" and, more usefully, stays
+legible under warm lighting on a grease-filmed screen.
+
+**One panel, not two.** A separate operator panel is the obvious next step and
+deliberately not taken yet: there is one restaurant, no roles, and a second
+panel would double the number of places a resource has to be registered before
+anyone has asked for it. The kitchen display in Phase 6 is a page in this panel,
+not a panel of its own.
+
+**`User` implements `FilamentUser`.** This is not decoration. Filament's panel
+middleware falls back to `config('app.env') === 'local'` for a user model that
+does not implement the contract — safe by default, and it means the first
+deploy locks out the person who just deployed it, with a bare 403 and nothing
+in the log. `canAccessPanel()` checks the tenant rather than a role, so that on
+the day this install serves two restaurants an account stamped with the wrong
+one cannot read the other's orders and call recordings. Add the role check
+there when you add roles.
+
+**Reversal cost:** low. One provider and one method.
+
+---
+
+## 0026 — Enums carry their own Filament labels, colours and icons
+
+All eight domain enums implement `HasLabel`, `HasColor` and `HasIcon`. A status
+badge is then `TextColumn::make('status')->badge()` with no mapping array
+anywhere, and it looks the same in the orders table, the order infolist, the
+call review screen and the kitchen display in Phase 6.
+
+The alternative is a `match` in each resource. It works, and it drifts: the day
+`OrderStatus::Failed` is added, four of the five screens get the new case and
+the fifth silently renders a grey badge with a raw `failed` in it. Putting the
+presentation on the enum means adding a case is one edit and the compiler-ish
+part of it — a `match` with no default — tells you when you have missed
+something.
+
+The cost is a domain enum that knows about a UI library. That is a real
+concession and worth naming: `App\Enums\OrderStatus` now imports from
+`Filament\Support\Contracts`. It is accepted because the alternative spreads the
+same coupling across five files instead of one, and because these enums are
+this application's vocabulary rather than a reusable package's.
+
+**Reversal cost:** low, and mechanical — delete three methods per enum and add a
+mapping wherever a badge appears.
+
+---
+
+## 0027 — The call review screen puts the transcript beside what it produced
+
+The single most valuable screen in this repo for the person tuning an agent.
+It exists because the question you actually have is never "what did the caller
+say" or "what did the system do" — it is "what did the caller say that made the
+system do *that*", and answering it by opening two tabs and scrolling both is
+how agent tuning stops happening.
+
+So: the transcript on the left, and on the right the order it produced —
+lines, totals, address, fulfilment — or an explicit statement that it produced
+none. Above both, a callout when the call is flagged, carrying the reason
+someone wrote. Below, collapsed, whatever ElevenLabs' own analysis made of it,
+which is useful and is not the primary evidence.
+
+Audio and transcript are one component rather than two. Clicking a turn's
+timestamp seeks the player, because reading a line and then hearing it is the
+whole reason anyone opens this screen — the transcript will not tell you the
+caller was three words into their postcode when the agent cut them off.
+
+The list this screen hangs off opens **filtered to flagged calls**. That is a
+deliberate default, not an oversight: the point of a flag is that somebody sees
+it, and a list that opens on all four hundred calls of the week buries it on
+page nine. The filter is one click away from off.
+
+**Reversal cost:** low. One infolist and one Blade view.
+
+---
+
+## 0028 — Restaurant settings is a Page, not a Resource
+
+There is one restaurant. A Filament resource for it would give a list page with
+a single row, a create button that must be disabled, and a delete action that
+must be removed — three pieces of scaffolding whose only job is to hide the
+fact that the model underneath is a singleton.
+
+`RestaurantSettings` is a `Filament\Pages\Page` that loads `Restaurant::current()`
+in `mount()` and saves it back. Four sections in the order someone setting up a
+client fills them in: the restaurant, where you are, taking orders, the agent.
+
+The page defines `content()` returning an embedded schema rather than pointing
+at a Blade view, which is the v4 pattern Filament's own `EditTenantProfile`
+uses. Worth writing down because it is not obvious from the outside that a
+`Page` subclass needs no view file at all.
+
+**When multi-tenancy arrives** this becomes either a resource or a tenant
+profile page, and the form components move across unchanged. The thing that
+does not survive is `Restaurant::current()` in `mount()`, which is one line and
+is already the single place that resolution happens (see #0005).
+
+**Reversal cost:** low.
+
+---
+
+## 0029 — Custom Blade inside the panel styles itself with Filament's CSS variables
+
+Filament v4 ships a **prebuilt** stylesheet containing only the utilities its
+own components use. A Tailwind class written in a custom view — `flex`,
+`max-w-md`, `bg-gray-100` — is not in that file, and the browser silently does
+nothing with it. Nothing errors. The view renders, wrong, and looks like a
+layout bug.
+
+The documented fix is a compiled custom theme, which means `npm install && npm
+run build` between a fresh clone and a dashboard that looks right. This repo is
+optimised for a developer's first hour, and a build step to make the review
+screen legible is exactly the kind of step it is trying not to have.
+
+So `review.blade.php` carries a scoped `<style>` block using `rl-`-prefixed
+class names and Filament's own custom properties — `--primary-50`,
+`--gray-100`, and the rest — with a `.dark` override block. It inherits the
+panel's colour scheme, including a user's amber, without compiling anything.
+
+This applies to every custom view added to the panel later. If you do add a
+compiled theme, these blocks can be replaced with utilities and nothing else
+changes.
+
+**Reversal cost:** low, and the reversal is additive — a compiled theme does not
+break the scoped styles.
+
+---
+
+## 0030 — Compose gives the container no `env_file`; `.env` is authoritative inside it
+
+`env_file: .env` copies every key in the file into the container's real
+environment at creation time. Laravel's environment repository is immutable and
+reads `$_SERVER` **before** it reads `.env`, and it treats "set but empty" as
+set. Both halves are reasonable. Together they are a trap.
+
+A fresh clone's `.env.example` has `APP_KEY=`. The container is therefore born
+with an empty `APP_KEY` in its real environment, which permanently shadows the
+key the entrypoint generates a second later. `php artisan key:generate` writes a
+perfectly good key to `.env` and every process in the container keeps reading
+the blank one.
+
+The same mechanism was worse in the test suite. PHPUnit's `<env>` elements only
+apply when the variable is not already set, so `DB_DATABASE=restaurantline`
+arrived from the container and **the Pest suite ran `RefreshDatabase` against
+the development database** — dropping the demo data on every run, which for a
+while looked like a flaky seeder.
+
+Three changes, all of which are the same decision:
+
+- No `env_file:` on the app services. `.env` is mounted with the source tree, so
+  Laravel reads it directly. Only `DB_HOST` and `REDIS_HOST` are passed through
+  `environment:`, because those are the two values that genuinely differ inside
+  the Docker network.
+- Every `<env>` in `phpunit.xml` carries `force="true"`, including an explicit
+  `APP_KEY`. A test configuration that the ambient environment can overrule is
+  not a test configuration.
+- The entrypoint unsets any of `APP_KEY APP_URL DB_DATABASE DB_USERNAME
+  DB_PASSWORD` that arrive blank, as belt and braces for a container started
+  some other way.
+
+The test `APP_KEY` is hard-coded and is not a secret: it encrypts nothing that
+outlives a test run, and hard-coding it means `composer check` works on a clone
+whose `.env` has no key yet.
+
+**Reversal cost:** low, and inadvisable.
+
+---
+
+## 0031 — Filament state casts hand closures floats, so the money closures take `mixed`
+
+`TextInput::numeric()` installs a `NumberStateCast`, which runs `floatval()`
+over the field's state. `dehydrateStateUsing` is therefore handed a **float**.
+
+`MoneyInput`'s dehydrator was first written with the parameter typed
+`int|string|null`, on the reasonable assumption that a wrong type in a
+`strict_types=1` file would raise a `TypeError`. It does not. `strict_types`
+applies at the **call site**, and the call site is Filament's, which is not
+strict. PHP coerced, preferred `int`, and `2.99` became `2` — stored as 200
+pence.
+
+Nothing threw. The form saved. The delivery fee was quietly wrong by a pound,
+which is the sort of bug that surfaces in an accounts reconciliation three
+months later.
+
+Both closures now take `mixed`. The rule generalises: **a closure handed to a
+vendor library gets no useful protection from a narrow union**, and a narrow
+union there is worse than none, because it silently converts instead of
+failing. `MoneyInputTest` pins the round trip with the awkward values —
+`12.50`, which `(int) ($v * 100)` gets wrong on its own, and `0`.
+
+**Reversal cost:** none. This is a bug fix with a note attached.
+
+---
+
+## 0032 — Call recordings are served by a controller; nothing in the dashboard deletes an order or a call
+
+A recording is a customer saying their address and their phone number out loud.
+It is the most sensitive thing this application stores and the only thing in it
+that cannot be regenerated.
+
+**They are not on a public disk.** `ELEVENLABS_AUDIO_DISK` defaults to `local`,
+and the review screen's player points at
+`/conversations/{conversation}/audio` — a controller behind the panel's own
+`Authenticate` middleware, which checks the tenant before streaming and 404s
+otherwise. A public disk would give every recording a guessable URL, and
+guessable URLs for that content are a breach waiting for somebody to notice the
+pattern. The response is streamed rather than downloaded so the player can seek
+without the whole call being held in memory.
+
+`Conversation::audioSource()` prefers the local copy over ElevenLabs' own URL,
+because theirs expires: a review screen that plays for a week and then silently
+stops is worse than one that never offered playback.
+
+**Nothing deletes an order or a call.** `canDelete()` and `canDeleteAny()`
+return false on both resources, overridden rather than left to a policy so that
+a bulk action added to a table later is refused too.
+
+An order is a financial record with a phone call behind it, and the thing an
+operator actually wants when they reach for delete is `Cancelled` — which the
+edit form offers, and which keeps the row, the reason and the link to the
+transcript. A call is the evidence that settles a disputed order and the raw
+material for fixing the agent's prompt; the dashboard offers "mark reviewed",
+which is what someone reaching for delete usually means.
+
+**Retention is a separate, deliberate job**, not a button next to a row. This
+repo does not ship one yet, and a real deployment serving real customers needs
+one: decide how long recordings are kept, write the command, schedule it, and
+say so in the restaurant's privacy notice. That is a conversation with the
+client, not a default this boilerplate should pick.
+
+**Reversal cost:** low for the delete rules, higher for the disk — moving
+recordings to a public bucket later means auditing every URL that has already
+been shared.
+
+---
+
+## 0033 — The dashboard pays its static-analysis costs in code, not in `phpstan.neon`
+
+The Filament panel arrived with 46 level-6 errors. Every one of them was fixed
+in the code rather than by widening the ignore list, because the ignores that
+already exist (#0010) are each pinned to a single unfixable library quirk, and a
+list that grows every phase stops being a list of exceptions.
+
+**Enum adapters declare what they return, not what the interface allows.**
+`HasLabel::getLabel()` is `string|Htmlable|null` because Filament accepts all
+three. Ours return a `string`, always, so they say `string`. Return types are
+covariant in PHP, so narrowing is legal, and it means the analyser can see that
+a badge label is never null without reading the body.
+
+**The tenant-scoping trait is generic.** `Builder` is invariant in its model, so
+`Builder<Order>` is not a `Builder<Model>` and a trait declaring the loose type
+cannot satisfy a resource declaring the tight one. `ScopesToCurrentRestaurant`
+now takes a `@template TModel`, and each resource states its model twice:
+`@extends \Filament\Resources\Resource<Order>` on the class so the parent query
+is typed, and `@use ScopesToCurrentRestaurant<Order>` on the `use` statement so
+this trait is. The tag has to sit on the `use` statement — a class-level `@use`
+is silently ignored — and `@extends` has to be fully qualified, because Pint's
+`phpdoc_types` fixer lowercases a bare `Resource` into PHP's native `resource`
+type. Both are noted in the files themselves; neither is guessable.
+
+**Tests assert on properties, not on higher-order expectations.**
+`expect($order)->status->toBe(...)` reads well and analyses to nothing: the
+chain goes through `Expectation::__get()`, and PHPStan can only follow it if
+`Pest\Expectation` is registered as a universal object crate — which switches
+off checking for every property in every chain. The suite uses
+`expect($order->status)->toBe(...)->and($order->cancellation_reason)->toBe(...)`
+instead, which is barely longer and, with `checkModelProperties` on, means a
+misspelled attribute is a failed build rather than a test that quietly asserts
+against null.
+
+The same rewrite removed several `->fresh()` calls in favour of `->refresh()`.
+`fresh()` returns `?static` and models a real possibility — the row was deleted
+underneath you — that a test asserting on the next line does not want to think
+about. `refresh()` returns the model.
+
+**Reversal cost:** low. Each of these is local to the file it appears in.

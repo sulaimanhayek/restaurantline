@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use Carbon\CarbonImmutable;
 use Database\Factories\UserFactory;
+use Filament\Models\Contracts\FilamentUser;
+use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -30,7 +33,7 @@ use Illuminate\Notifications\Notifiable;
  *
  * @method static UserFactory factory($count = null, $state = [])
  */
-class User extends Authenticatable
+class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
@@ -59,10 +62,10 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'email_verified_at' => 'immutable_datetime',
+            'email_verified_at' => UtcDateTime::class,
             'password' => 'hashed',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 
@@ -70,5 +73,31 @@ class User extends Authenticatable
     public function restaurant(): BelongsTo
     {
         return $this->belongsTo(Restaurant::class);
+    }
+
+    /**
+     * Whether this user may open the dashboard.
+     *
+     * Implementing FilamentUser is not optional. Filament's panel middleware
+     * falls back to `config('app.env') === 'local'` for models that do not
+     * implement it — which is safe by default and means a deployed install
+     * locks out the person who just deployed it, with a bare 403 and nothing
+     * in the log to say why.
+     *
+     * There are no roles here: a row in `users` is staff, because nothing
+     * creates one except the seeder and `php artisan kitchenline:user`, and
+     * there is no public registration route. What is checked is the tenant, so
+     * that on the day this install serves two restaurants an account stamped
+     * with the wrong one cannot read the other's orders and call recordings.
+     * A null `restaurant_id` is the deploying developer — see the class
+     * docblock. Add the role check here when you add roles.
+     */
+    public function canAccessPanel(Panel $panel): bool
+    {
+        if ($this->restaurant_id === null) {
+            return true;
+        }
+
+        return $this->restaurant_id === Restaurant::currentOrNull()?->id;
     }
 }

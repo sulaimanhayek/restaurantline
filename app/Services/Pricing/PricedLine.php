@@ -23,6 +23,7 @@ final readonly class PricedLine
      */
     public function __construct(
         public ?int $menuItemId,
+        public ?string $menuItemSlug,
         public string $name,
         public ?string $description,
         public ?string $sku,

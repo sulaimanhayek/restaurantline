@@ -37,7 +37,7 @@ final readonly class MenuMatch
     public function toAgentArray(): array
     {
         return [
-            'id' => $this->item->id,
+            'item' => $this->item->slug,
             'name' => $this->item->name,
             'description' => $this->item->description,
             'price' => $this->item->price,

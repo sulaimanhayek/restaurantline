@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Support\SpokenTime;
 use Carbon\CarbonImmutable;
 use Database\Factories\OpeningHourFactory;
@@ -46,8 +47,8 @@ class OpeningHour extends Model
         return [
             'day_of_week' => 'integer',
             'closes_next_day' => 'boolean',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 

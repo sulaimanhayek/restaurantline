@@ -31,11 +31,11 @@ final readonly class ModifierMatch
     public function toAgentArray(): array
     {
         return [
-            'id' => $this->modifier->id,
+            'modifier' => $this->modifier->slug,
             'name' => $this->modifier->name,
             'kind' => $this->modifier->kind->value,
-            'group' => $this->group->name,
-            'group_id' => $this->group->id,
+            'group' => $this->group->slug,
+            'group_name' => $this->group->name,
             'price_delta' => $this->priceDelta,
             'available' => $this->isAvailable,
             'confidence' => round($this->confidence, 3),

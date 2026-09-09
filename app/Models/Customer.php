@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use Carbon\CarbonImmutable;
 use Database\Factories\CustomerFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -50,10 +51,10 @@ class Customer extends Model
     {
         return [
             'order_count' => 'integer',
-            'first_ordered_at' => 'immutable_datetime',
-            'last_ordered_at' => 'immutable_datetime',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'first_ordered_at' => UtcDateTime::class,
+            'last_ordered_at' => UtcDateTime::class,
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 

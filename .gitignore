@@ -26,3 +26,11 @@ Thumbs.db
 # restaurantline
 /.composer
 /evals/results
+
+# Filament's compiled assets. `composer install` runs `filament:upgrade`,
+# which republishes them, so a checkout always has the set that matches the
+# installed version — and committing them means every package bump carries a
+# few thousand lines of minified diff.
+/public/css/filament
+/public/js/filament
+/public/fonts/filament

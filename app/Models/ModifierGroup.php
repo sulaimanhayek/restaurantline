@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Enums\ModifierGroupSelectionType;
 use Carbon\CarbonImmutable;
 use Database\Factories\ModifierGroupFactory;
@@ -57,8 +58,8 @@ class ModifierGroup extends Model
             'max_selections' => 'integer',
             'is_required' => 'boolean',
             'sort_order' => 'integer',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 

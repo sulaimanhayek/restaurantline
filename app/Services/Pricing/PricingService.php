@@ -93,6 +93,7 @@ final class PricingService
 
             $modifiers[] = new PricedModifier(
                 modifierId: $modifier->id,
+                modifierSlug: $modifier->slug,
                 modifierGroupId: $modifier->modifier_group_id,
                 groupName: $modifier->group->name,
                 name: $modifier->name,
@@ -112,6 +113,7 @@ final class PricingService
 
         return new PricedLine(
             menuItemId: $item->id,
+            menuItemSlug: $item->slug,
             name: $item->name,
             description: $item->description,
             sku: $item->sku,

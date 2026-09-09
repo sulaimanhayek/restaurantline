@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use App\Enums\ConversationDirection;
 use App\Enums\ConversationOutcome;
 use Carbon\CarbonImmutable;
@@ -13,6 +14,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * One call.
@@ -57,6 +59,25 @@ class Conversation extends Model
     protected $guarded = [];
 
     /**
+     * Mirrors the column defaults, so a row means the same thing in memory as
+     * it does once the database has seen it.
+     *
+     * Without this, a model from `firstOrCreate` comes back with these
+     * attributes unset. The database fills them in on insert; the instance does
+     * not know that, so `$conversation->outcome` reads null on exactly the path
+     * that matters — a call that never reached an agent tool and gets its row
+     * from the post-call webhook instead. The `@property` block above promises
+     * a ConversationOutcome, and this is what makes that true.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'direction' => 'inbound',
+        'outcome' => 'pending',
+        'needs_review' => false,
+    ];
+
+    /**
      * @return array<string, string>
      */
     protected function casts(): array
@@ -64,9 +85,9 @@ class Conversation extends Model
         return [
             'direction' => ConversationDirection::class,
             'outcome' => ConversationOutcome::class,
-            'started_at' => 'immutable_datetime',
-            'ended_at' => 'immutable_datetime',
-            'reviewed_at' => 'immutable_datetime',
+            'started_at' => UtcDateTime::class,
+            'ended_at' => UtcDateTime::class,
+            'reviewed_at' => UtcDateTime::class,
             'duration_seconds' => 'integer',
             'transcript' => 'array',
             'analysis' => 'array',
@@ -74,8 +95,8 @@ class Conversation extends Model
             'needs_review' => 'boolean',
             'cost' => 'integer',
             'cost_credits' => 'integer',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 
@@ -142,7 +163,11 @@ class Conversation extends Model
      * Turn-by-turn transcript as plain text, for reading in the dashboard or
      * diffing in an eval.
      *
-     * @return list<array{role: string, message: string}>
+     * `at` is seconds into the call, and is null on older rows and on any
+     * provider payload that omits it — the dashboard uses it to seek the audio
+     * to a turn, and simply does not offer that on turns without it.
+     *
+     * @return list<array{role: string, message: string, at: int|null}>
      */
     public function transcriptTurns(): array
     {
@@ -160,10 +185,33 @@ class Conversation extends Model
                 continue;
             }
 
-            $turns[] = ['role' => $role, 'message' => $message];
+            $at = $turn['time_in_call_secs'] ?? null;
+
+            $turns[] = [
+                'role' => $role,
+                'message' => $message,
+                'at' => is_numeric($at) ? (int) $at : null,
+            ];
         }
 
         return $turns;
+    }
+
+    /**
+     * A link the dashboard can put in an <audio> tag, or null if there is no
+     * recording.
+     *
+     * Prefers the copy this install downloaded over the provider's URL: the
+     * provider's expires, and a review screen that plays for a week and then
+     * silently stops is worse than one that never offered playback.
+     */
+    public function audioSource(): ?string
+    {
+        if ($this->audio_path !== null && Storage::disk('local')->exists($this->audio_path)) {
+            return route('conversations.audio', ['conversation' => $this->id]);
+        }
+
+        return $this->audio_url;
     }
 
     public function durationForHumans(): string

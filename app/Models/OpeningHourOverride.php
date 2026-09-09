@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Casts\UtcDateTime;
 use Carbon\CarbonImmutable;
 use Database\Factories\OpeningHourOverrideFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -48,8 +49,8 @@ class OpeningHourOverride extends Model
             'date' => 'immutable_date',
             'is_closed' => 'boolean',
             'closes_next_day' => 'boolean',
-            'created_at' => 'immutable_datetime',
-            'updated_at' => 'immutable_datetime',
+            'created_at' => UtcDateTime::class,
+            'updated_at' => UtcDateTime::class,
         ];
     }
 
