@@ -220,4 +220,16 @@ class Restaurant extends Model
     {
         return self::query()->orderBy('id')->firstOrFail();
     }
+
+    /**
+     * The same, for the handful of callers that run before there is one.
+     *
+     * Sign-in is the case that matters: `RESTAURANTLINE_SEED_ON_BOOT=false`
+     * gives an install with a user and no restaurant, and a login page that
+     * throws a ModelNotFoundException is a bad first five minutes.
+     */
+    public static function currentOrNull(): ?self
+    {
+        return self::query()->orderBy('id')->first();
+    }
 }

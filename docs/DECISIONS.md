@@ -707,3 +707,291 @@ first thing anyone with a captured request would try.
 **Reversing any of this** is a few lines in one middleware and one controller.
 The fail-closed default is the one worth arguing about, and the argument should
 happen before it is changed, not after.
+
+---
+
+## 0025 — The dashboard is one Filament panel at `/admin`, and every user model implements `FilamentUser`
+
+Two audiences share this panel and want opposite things. The person who forked
+this repo wants every field on screen, because they are wiring it to a client.
+The person answering the phone at 8pm on a Friday wants tonight's orders and
+nothing else. Where those conflict the second wins: they use it every day.
+
+Concretely that means orders and calls sit at the top of the navigation on
+their own, and everything a restaurant touches once a week — the menu, modifier
+groups, customers, settings — is filed behind a heading. Primary colour is
+amber, which reads as "kitchen" rather than "SaaS" and, more usefully, stays
+legible under warm lighting on a grease-filmed screen.
+
+**One panel, not two.** A separate operator panel is the obvious next step and
+deliberately not taken yet: there is one restaurant, no roles, and a second
+panel would double the number of places a resource has to be registered before
+anyone has asked for it. The kitchen display in Phase 6 is a page in this panel,
+not a panel of its own.
+
+**`User` implements `FilamentUser`.** This is not decoration. Filament's panel
+middleware falls back to `config('app.env') === 'local'` for a user model that
+does not implement the contract — safe by default, and it means the first
+deploy locks out the person who just deployed it, with a bare 403 and nothing
+in the log. `canAccessPanel()` checks the tenant rather than a role, so that on
+the day this install serves two restaurants an account stamped with the wrong
+one cannot read the other's orders and call recordings. Add the role check
+there when you add roles.
+
+**Reversal cost:** low. One provider and one method.
+
+---
+
+## 0026 — Enums carry their own Filament labels, colours and icons
+
+All eight domain enums implement `HasLabel`, `HasColor` and `HasIcon`. A status
+badge is then `TextColumn::make('status')->badge()` with no mapping array
+anywhere, and it looks the same in the orders table, the order infolist, the
+call review screen and the kitchen display in Phase 6.
+
+The alternative is a `match` in each resource. It works, and it drifts: the day
+`OrderStatus::Failed` is added, four of the five screens get the new case and
+the fifth silently renders a grey badge with a raw `failed` in it. Putting the
+presentation on the enum means adding a case is one edit and the compiler-ish
+part of it — a `match` with no default — tells you when you have missed
+something.
+
+The cost is a domain enum that knows about a UI library. That is a real
+concession and worth naming: `App\Enums\OrderStatus` now imports from
+`Filament\Support\Contracts`. It is accepted because the alternative spreads the
+same coupling across five files instead of one, and because these enums are
+this application's vocabulary rather than a reusable package's.
+
+**Reversal cost:** low, and mechanical — delete three methods per enum and add a
+mapping wherever a badge appears.
+
+---
+
+## 0027 — The call review screen puts the transcript beside what it produced
+
+The single most valuable screen in this repo for the person tuning an agent.
+It exists because the question you actually have is never "what did the caller
+say" or "what did the system do" — it is "what did the caller say that made the
+system do *that*", and answering it by opening two tabs and scrolling both is
+how agent tuning stops happening.
+
+So: the transcript on the left, and on the right the order it produced —
+lines, totals, address, fulfilment — or an explicit statement that it produced
+none. Above both, a callout when the call is flagged, carrying the reason
+someone wrote. Below, collapsed, whatever ElevenLabs' own analysis made of it,
+which is useful and is not the primary evidence.
+
+Audio and transcript are one component rather than two. Clicking a turn's
+timestamp seeks the player, because reading a line and then hearing it is the
+whole reason anyone opens this screen — the transcript will not tell you the
+caller was three words into their postcode when the agent cut them off.
+
+The list this screen hangs off opens **filtered to flagged calls**. That is a
+deliberate default, not an oversight: the point of a flag is that somebody sees
+it, and a list that opens on all four hundred calls of the week buries it on
+page nine. The filter is one click away from off.
+
+**Reversal cost:** low. One infolist and one Blade view.
+
+---
+
+## 0028 — Restaurant settings is a Page, not a Resource
+
+There is one restaurant. A Filament resource for it would give a list page with
+a single row, a create button that must be disabled, and a delete action that
+must be removed — three pieces of scaffolding whose only job is to hide the
+fact that the model underneath is a singleton.
+
+`RestaurantSettings` is a `Filament\Pages\Page` that loads `Restaurant::current()`
+in `mount()` and saves it back. Four sections in the order someone setting up a
+client fills them in: the restaurant, where you are, taking orders, the agent.
+
+The page defines `content()` returning an embedded schema rather than pointing
+at a Blade view, which is the v4 pattern Filament's own `EditTenantProfile`
+uses. Worth writing down because it is not obvious from the outside that a
+`Page` subclass needs no view file at all.
+
+**When multi-tenancy arrives** this becomes either a resource or a tenant
+profile page, and the form components move across unchanged. The thing that
+does not survive is `Restaurant::current()` in `mount()`, which is one line and
+is already the single place that resolution happens (see #0005).
+
+**Reversal cost:** low.
+
+---
+
+## 0029 — Custom Blade inside the panel styles itself with Filament's CSS variables
+
+Filament v4 ships a **prebuilt** stylesheet containing only the utilities its
+own components use. A Tailwind class written in a custom view — `flex`,
+`max-w-md`, `bg-gray-100` — is not in that file, and the browser silently does
+nothing with it. Nothing errors. The view renders, wrong, and looks like a
+layout bug.
+
+The documented fix is a compiled custom theme, which means `npm install && npm
+run build` between a fresh clone and a dashboard that looks right. This repo is
+optimised for a developer's first hour, and a build step to make the review
+screen legible is exactly the kind of step it is trying not to have.
+
+So `review.blade.php` carries a scoped `<style>` block using `rl-`-prefixed
+class names and Filament's own custom properties — `--primary-50`,
+`--gray-100`, and the rest — with a `.dark` override block. It inherits the
+panel's colour scheme, including a user's amber, without compiling anything.
+
+This applies to every custom view added to the panel later. If you do add a
+compiled theme, these blocks can be replaced with utilities and nothing else
+changes.
+
+**Reversal cost:** low, and the reversal is additive — a compiled theme does not
+break the scoped styles.
+
+---
+
+## 0030 — Compose gives the container no `env_file`; `.env` is authoritative inside it
+
+`env_file: .env` copies every key in the file into the container's real
+environment at creation time. Laravel's environment repository is immutable and
+reads `$_SERVER` **before** it reads `.env`, and it treats "set but empty" as
+set. Both halves are reasonable. Together they are a trap.
+
+A fresh clone's `.env.example` has `APP_KEY=`. The container is therefore born
+with an empty `APP_KEY` in its real environment, which permanently shadows the
+key the entrypoint generates a second later. `php artisan key:generate` writes a
+perfectly good key to `.env` and every process in the container keeps reading
+the blank one.
+
+The same mechanism was worse in the test suite. PHPUnit's `<env>` elements only
+apply when the variable is not already set, so `DB_DATABASE=restaurantline`
+arrived from the container and **the Pest suite ran `RefreshDatabase` against
+the development database** — dropping the demo data on every run, which for a
+while looked like a flaky seeder.
+
+Three changes, all of which are the same decision:
+
+- No `env_file:` on the app services. `.env` is mounted with the source tree, so
+  Laravel reads it directly. Only `DB_HOST` and `REDIS_HOST` are passed through
+  `environment:`, because those are the two values that genuinely differ inside
+  the Docker network.
+- Every `<env>` in `phpunit.xml` carries `force="true"`, including an explicit
+  `APP_KEY`. A test configuration that the ambient environment can overrule is
+  not a test configuration.
+- The entrypoint unsets any of `APP_KEY APP_URL DB_DATABASE DB_USERNAME
+  DB_PASSWORD` that arrive blank, as belt and braces for a container started
+  some other way.
+
+The test `APP_KEY` is hard-coded and is not a secret: it encrypts nothing that
+outlives a test run, and hard-coding it means `composer check` works on a clone
+whose `.env` has no key yet.
+
+**Reversal cost:** low, and inadvisable.
+
+---
+
+## 0031 — Filament state casts hand closures floats, so the money closures take `mixed`
+
+`TextInput::numeric()` installs a `NumberStateCast`, which runs `floatval()`
+over the field's state. `dehydrateStateUsing` is therefore handed a **float**.
+
+`MoneyInput`'s dehydrator was first written with the parameter typed
+`int|string|null`, on the reasonable assumption that a wrong type in a
+`strict_types=1` file would raise a `TypeError`. It does not. `strict_types`
+applies at the **call site**, and the call site is Filament's, which is not
+strict. PHP coerced, preferred `int`, and `2.99` became `2` — stored as 200
+pence.
+
+Nothing threw. The form saved. The delivery fee was quietly wrong by a pound,
+which is the sort of bug that surfaces in an accounts reconciliation three
+months later.
+
+Both closures now take `mixed`. The rule generalises: **a closure handed to a
+vendor library gets no useful protection from a narrow union**, and a narrow
+union there is worse than none, because it silently converts instead of
+failing. `MoneyInputTest` pins the round trip with the awkward values —
+`12.50`, which `(int) ($v * 100)` gets wrong on its own, and `0`.
+
+**Reversal cost:** none. This is a bug fix with a note attached.
+
+---
+
+## 0032 — Call recordings are served by a controller; nothing in the dashboard deletes an order or a call
+
+A recording is a customer saying their address and their phone number out loud.
+It is the most sensitive thing this application stores and the only thing in it
+that cannot be regenerated.
+
+**They are not on a public disk.** `ELEVENLABS_AUDIO_DISK` defaults to `local`,
+and the review screen's player points at
+`/conversations/{conversation}/audio` — a controller behind the panel's own
+`Authenticate` middleware, which checks the tenant before streaming and 404s
+otherwise. A public disk would give every recording a guessable URL, and
+guessable URLs for that content are a breach waiting for somebody to notice the
+pattern. The response is streamed rather than downloaded so the player can seek
+without the whole call being held in memory.
+
+`Conversation::audioSource()` prefers the local copy over ElevenLabs' own URL,
+because theirs expires: a review screen that plays for a week and then silently
+stops is worse than one that never offered playback.
+
+**Nothing deletes an order or a call.** `canDelete()` and `canDeleteAny()`
+return false on both resources, overridden rather than left to a policy so that
+a bulk action added to a table later is refused too.
+
+An order is a financial record with a phone call behind it, and the thing an
+operator actually wants when they reach for delete is `Cancelled` — which the
+edit form offers, and which keeps the row, the reason and the link to the
+transcript. A call is the evidence that settles a disputed order and the raw
+material for fixing the agent's prompt; the dashboard offers "mark reviewed",
+which is what someone reaching for delete usually means.
+
+**Retention is a separate, deliberate job**, not a button next to a row. This
+repo does not ship one yet, and a real deployment serving real customers needs
+one: decide how long recordings are kept, write the command, schedule it, and
+say so in the restaurant's privacy notice. That is a conversation with the
+client, not a default this boilerplate should pick.
+
+**Reversal cost:** low for the delete rules, higher for the disk — moving
+recordings to a public bucket later means auditing every URL that has already
+been shared.
+
+---
+
+## 0033 — The dashboard pays its static-analysis costs in code, not in `phpstan.neon`
+
+The Filament panel arrived with 46 level-6 errors. Every one of them was fixed
+in the code rather than by widening the ignore list, because the ignores that
+already exist (#0010) are each pinned to a single unfixable library quirk, and a
+list that grows every phase stops being a list of exceptions.
+
+**Enum adapters declare what they return, not what the interface allows.**
+`HasLabel::getLabel()` is `string|Htmlable|null` because Filament accepts all
+three. Ours return a `string`, always, so they say `string`. Return types are
+covariant in PHP, so narrowing is legal, and it means the analyser can see that
+a badge label is never null without reading the body.
+
+**The tenant-scoping trait is generic.** `Builder` is invariant in its model, so
+`Builder<Order>` is not a `Builder<Model>` and a trait declaring the loose type
+cannot satisfy a resource declaring the tight one. `ScopesToCurrentRestaurant`
+now takes a `@template TModel`, and each resource states its model twice:
+`@extends \Filament\Resources\Resource<Order>` on the class so the parent query
+is typed, and `@use ScopesToCurrentRestaurant<Order>` on the `use` statement so
+this trait is. The tag has to sit on the `use` statement — a class-level `@use`
+is silently ignored — and `@extends` has to be fully qualified, because Pint's
+`phpdoc_types` fixer lowercases a bare `Resource` into PHP's native `resource`
+type. Both are noted in the files themselves; neither is guessable.
+
+**Tests assert on properties, not on higher-order expectations.**
+`expect($order)->status->toBe(...)` reads well and analyses to nothing: the
+chain goes through `Expectation::__get()`, and PHPStan can only follow it if
+`Pest\Expectation` is registered as a universal object crate — which switches
+off checking for every property in every chain. The suite uses
+`expect($order->status)->toBe(...)->and($order->cancellation_reason)->toBe(...)`
+instead, which is barely longer and, with `checkModelProperties` on, means a
+misspelled attribute is a failed build rather than a test that quietly asserts
+against null.
+
+The same rewrite removed several `->fresh()` calls in favour of `->refresh()`.
+`fresh()` returns `?static` and models a real possibility — the row was deleted
+underneath you — that a test asserting on the next line does not want to think
+about. `refresh()` returns the model.
+
+**Reversal cost:** low. Each of these is local to the file it appears in.

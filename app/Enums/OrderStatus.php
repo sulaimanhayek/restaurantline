@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Enums;
 
+use Filament\Support\Contracts\HasColor;
+use Filament\Support\Contracts\HasLabel;
+
 /**
  * The lifecycle of an order.
  *
@@ -18,7 +21,7 @@ namespace App\Enums;
  * abandoned `confirming` row you can inspect, rather than a phantom order the
  * kitchen starts cooking.
  */
-enum OrderStatus: string
+enum OrderStatus: string implements HasColor, HasLabel
 {
     /** Being assembled. Nothing has been read back to the caller yet. */
     case Draft = 'draft';
@@ -113,5 +116,27 @@ enum OrderStatus: string
     public function isCommitted(): bool
     {
         return ! in_array($this, [self::Draft, self::Confirming], true);
+    }
+
+    /*
+     * Filament reads these three contracts directly, so a status rendered as a
+     * badge picks up its own wording and colour with no mapping at the call
+     * site. The alternative — a formatStateUsing closure in every resource that
+     * shows a status — is the same match statement copied six times, and the
+     * copies drift.
+     *
+     * The domain methods above stay the canonical ones; these only adapt them.
+     *
+     * @see docs/DECISIONS.md #0026
+     */
+
+    public function getLabel(): string
+    {
+        return $this->label();
+    }
+
+    public function getColor(): string
+    {
+        return $this->color();
     }
 }

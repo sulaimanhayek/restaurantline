@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Enums;
 
+use Filament\Support\Contracts\HasColor;
+use Filament\Support\Contracts\HasLabel;
+
 /**
  * What actually happened on a call.
  *
@@ -13,7 +16,7 @@ namespace App\Enums;
  * mishearing one menu item, or that half your callers live outside the radius
  * you configured.
  */
-enum ConversationOutcome: string
+enum ConversationOutcome: string implements HasColor, HasLabel
 {
     /** Still in progress, or the post-call webhook has not arrived yet. */
     case Pending = 'pending';
@@ -88,5 +91,27 @@ enum ConversationOutcome: string
     public function warrantsReview(): bool
     {
         return in_array($this, self::warrantingReview(), true);
+    }
+
+    /*
+     * Filament reads these three contracts directly, so a status rendered as a
+     * badge picks up its own wording and colour with no mapping at the call
+     * site. The alternative — a formatStateUsing closure in every resource that
+     * shows a status — is the same match statement copied six times, and the
+     * copies drift.
+     *
+     * The domain methods above stay the canonical ones; these only adapt them.
+     *
+     * @see docs/DECISIONS.md #0026
+     */
+
+    public function getLabel(): string
+    {
+        return $this->label();
+    }
+
+    public function getColor(): string
+    {
+        return $this->color();
     }
 }

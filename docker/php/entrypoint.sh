@@ -12,6 +12,17 @@ ROLE="${1:-serve}"
 
 log() { printf '\033[0;36m[entrypoint]\033[0m %s\n' "$*"; }
 
+# --- blank variables from the container environment ------------------------
+# Belt and braces for the compose.yaml `env_file` trap (docs/DECISIONS.md
+# #0030): Laravel treats an environment variable that exists but is empty as
+# set, and never overwrites it from .env. Unsetting the blanks keeps .env
+# authoritative however this container was started.
+for var in APP_KEY APP_URL DB_DATABASE DB_USERNAME DB_PASSWORD; do
+    if [[ -z "${!var:-}" ]]; then
+        unset "$var" || true
+    fi
+done
+
 # --- .env ------------------------------------------------------------------
 if [[ ! -f .env ]]; then
     log "No .env found — copying .env.example."

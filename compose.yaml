@@ -20,8 +20,16 @@ x-app: &app
   volumes:
     - .:/var/www/html
     - composer-cache:/var/www/html/.composer
-  env_file:
-    - .env
+  # Deliberately no `env_file:`. Compose would copy every key in .env into the
+  # container's real environment at creation time, blanks included — and a fresh
+  # clone's .env has an empty APP_KEY. Laravel's env repository reads $_SERVER
+  # before it reads .env and treats "set but empty" as set, so that blank would
+  # permanently shadow the key the entrypoint generates a second later. The same
+  # mechanism handed the Pest suite the *development* DB_DATABASE and had it run
+  # RefreshDatabase against your demo data. See docs/DECISIONS.md #0030.
+  #
+  # .env is mounted with the source tree, so Laravel reads it directly. Only the
+  # two values that are genuinely different inside the network live here.
   environment:
     DB_HOST: postgres
     REDIS_HOST: redis

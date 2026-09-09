@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * One call.
@@ -162,7 +163,11 @@ class Conversation extends Model
      * Turn-by-turn transcript as plain text, for reading in the dashboard or
      * diffing in an eval.
      *
-     * @return list<array{role: string, message: string}>
+     * `at` is seconds into the call, and is null on older rows and on any
+     * provider payload that omits it — the dashboard uses it to seek the audio
+     * to a turn, and simply does not offer that on turns without it.
+     *
+     * @return list<array{role: string, message: string, at: int|null}>
      */
     public function transcriptTurns(): array
     {
@@ -180,10 +185,33 @@ class Conversation extends Model
                 continue;
             }
 
-            $turns[] = ['role' => $role, 'message' => $message];
+            $at = $turn['time_in_call_secs'] ?? null;
+
+            $turns[] = [
+                'role' => $role,
+                'message' => $message,
+                'at' => is_numeric($at) ? (int) $at : null,
+            ];
         }
 
         return $turns;
+    }
+
+    /**
+     * A link the dashboard can put in an <audio> tag, or null if there is no
+     * recording.
+     *
+     * Prefers the copy this install downloaded over the provider's URL: the
+     * provider's expires, and a review screen that plays for a week and then
+     * silently stops is worse than one that never offered playback.
+     */
+    public function audioSource(): ?string
+    {
+        if ($this->audio_path !== null && Storage::disk('local')->exists($this->audio_path)) {
+            return route('conversations.audio', ['conversation' => $this->id]);
+        }
+
+        return $this->audio_url;
     }
 
     public function durationForHumans(): string

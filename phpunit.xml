@@ -20,24 +20,38 @@
             <directory>app</directory>
         </include>
     </source>
+    <!-- Every <env> below carries force="true" on purpose.
+
+         Without it PHPUnit sets a variable only when the process does not
+         already have one, and Docker Compose gives this container the whole
+         of .env — so `DB_DATABASE` arrived as the development database and
+         the suite quietly ran RefreshDatabase against it, dropping the demo
+         data on every run. A test configuration that can be overruled by the
+         ambient environment is not a test configuration. -->
     <php>
-        <env name="APP_ENV" value="testing"/>
-        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
-        <env name="BCRYPT_ROUNDS" value="4"/>
-        <env name="BROADCAST_CONNECTION" value="null"/>
-        <env name="CACHE_STORE" value="array"/>
+        <env name="APP_ENV" value="testing" force="true"/>
+        <!-- A fixed key for the test suite. Not a secret: it encrypts
+             nothing that outlives a test run, and hard-coding it means
+             `composer check` works on a clone whose .env has no key
+             yet. The application's real key lives in .env and is
+             generated on first boot. -->
+        <env name="APP_KEY" value="base64:cmVzdGF1cmFudGxpbmUtdGVzdGluZy1rZXktMzJieXQ=" force="true"/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file" force="true"/>
+        <env name="BCRYPT_ROUNDS" value="4" force="true"/>
+        <env name="BROADCAST_CONNECTION" value="null" force="true"/>
+        <env name="CACHE_STORE" value="array" force="true"/>
         <!-- Tests run on PostgreSQL, not SQLite. The menu matcher uses
              pg_trgm and jsonb containment; a SQLite suite would pass while the
              real query was broken. `docker compose up` creates this database
              for you — see docker/postgres/init. -->
-        <env name="DB_CONNECTION" value="pgsql"/>
-        <env name="DB_DATABASE" value="restaurantline_testing"/>
-        <env name="DB_URL" value=""/>
-        <env name="MAIL_MAILER" value="array"/>
-        <env name="QUEUE_CONNECTION" value="sync"/>
-        <env name="SESSION_DRIVER" value="array"/>
-        <env name="PULSE_ENABLED" value="false"/>
-        <env name="TELESCOPE_ENABLED" value="false"/>
-        <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <env name="DB_CONNECTION" value="pgsql" force="true"/>
+        <env name="DB_DATABASE" value="restaurantline_testing" force="true"/>
+        <env name="DB_URL" value="" force="true"/>
+        <env name="MAIL_MAILER" value="array" force="true"/>
+        <env name="QUEUE_CONNECTION" value="sync" force="true"/>
+        <env name="SESSION_DRIVER" value="array" force="true"/>
+        <env name="PULSE_ENABLED" value="false" force="true"/>
+        <env name="TELESCOPE_ENABLED" value="false" force="true"/>
+        <env name="NIGHTWATCH_ENABLED" value="false" force="true"/>
     </php>
 </phpunit>
