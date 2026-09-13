@@ -20,6 +20,7 @@
         "laravel/reverb": "^1.0",
         "laravel/tinker": "^2.10.1",
         "league/csv": "^9.0",
+        "livewire/livewire": "^3.8",
         "predis/predis": "^3.0"
     },
     "require-dev": {

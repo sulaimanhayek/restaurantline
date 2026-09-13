@@ -9,10 +9,12 @@ use App\Enums\FulfilmentType;
 use App\Enums\OrderSource;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentStatus;
+use App\Observers\OrderObserver;
 use App\Support\Money;
 use App\Support\SpokenTime;
 use Carbon\CarbonImmutable;
 use Database\Factories\OrderFactory;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -65,6 +67,7 @@ use Illuminate\Support\Collection;
  *
  * @method static OrderFactory factory($count = null, $state = [])
  */
+#[ObservedBy(OrderObserver::class)]
 class Order extends Model
 {
     /** @use HasFactory<OrderFactory> */

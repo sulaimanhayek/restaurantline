@@ -995,3 +995,114 @@ underneath you — that a test asserting on the next line does not want to think
 about. `refresh()` returns the model.
 
 **Reversal cost:** low. Each of these is local to the file it appears in.
+
+---
+
+## 0034 — Status changes are stamped and announced in one place: the observer
+
+`orders` carries `confirmed_at`, `accepted_at`, `ready_at`, `completed_at` and
+`cancelled_at`. Before this phase only the first was ever filled in, by the
+agent's confirm endpoint, and the rest were columns waiting for somebody to
+build a report on them.
+
+Status is set from at least four places already — the agent's confirm endpoint,
+the dashboard's status dropdown, the kitchen display, and whatever a fork adds
+next. Stamping at each call site means a `ready_at` that only some of them fill
+in, which is worse than one nothing fills in: the average-prep-time report built
+on it looks right and is wrong.
+
+So `OrderStatus::timestampColumn()` says which column belongs to which status,
+and `OrderObserver::updating()` sets it. `updating` rather than `updated` so the
+column lands in the same `UPDATE` and the row is never readable in the state
+where the status has moved and the timestamp has not. An explicitly supplied
+value always wins, so the confirm endpoint and a fork backfilling history both
+still work.
+
+The same observer dispatches `OrderReceived` and `OrderStatusChanged`. **The
+events carry an identifier, not a copy of the order** — `order_id`,
+`order_number`, `status`, and the previous status where there is one. A payload
+containing the caller's name, phone number and delivery address would be a
+payload sitting in a Redis queue and travelling to every subscribed browser, and
+the subscriber already has a database. The listener's job is to ask for a
+re-render, which is what `$refresh` does.
+
+Both events implement `ShouldDispatchAfterCommit`, so nothing announces an order
+that a failed transaction then rolled back.
+
+**Reversal cost:** low.
+
+---
+
+## 0035 — The kitchen display is three columns and one tap, and there is no undo
+
+`/kitchen` is a full-page Livewire component on its own layout, not a Filament
+page. A panel gives you a sidebar, a topbar, a user menu and a breadcrumb trail
+— wasted pixels on a screen nobody navigates, and tap targets somebody's elbow
+will eventually find.
+
+**Three columns, not six.** The board shows New, Preparing and Ready.
+`Confirmed` and `Accepted` share the first column, because the difference
+between them is who agreed to the order and the kitchen does not care. Every
+other status is off the board: `Draft` and `Confirming` have not been agreed to
+by the caller yet, and putting one in front of a chef would have food cooked for
+an order that does not exist.
+
+**One tap per card**, labelled for what happens next — Start, Ready, Done —
+rather than for the status it lands in. "Preparing" on a button reads as a
+description of the card you are looking at; "Start" reads as an instruction.
+
+**There is no undo.** Undo on a touchscreen means a second control next to the
+first, and the tap that needs undoing is nearly always the one that was aimed at
+the control beside it. Fixing a mistake is a job for the dashboard, where there
+is a keyboard and a mouse and a full status dropdown.
+
+**A tap that cannot be honoured does nothing and says nothing.** A missing
+order, another restaurant's order, an order with nowhere left to go: the
+re-render that follows shows the board as it actually is, which is the answer to
+all three, and an error toast on a wall-mounted screen is noise nobody is
+positioned to act on.
+
+`restaurant_id` is `#[Locked]`. It is half of the websocket channel name and the
+tenancy key every query filters by, and a property the browser can send back is
+a property the browser can change.
+
+**The component re-checks authorisation on every request, in `boot()`.** The
+route sits behind Filament's `Authenticate` middleware, but Livewire's own
+`/livewire/update` endpoint does not, and it cannot simply be moved behind auth
+because the login screen is itself a Livewire component. Without the `boot()`
+check, a snapshot signed while signed in would keep working after signing out.
+
+**Reversal cost:** low.
+
+---
+
+## 0036 — The kitchen screen needs no build step, and polls even when the socket is up
+
+Two decisions, both aimed squarely at the first hour with this repo.
+
+**No npm required.** `layouts/kitchen.blade.php` carries its own stylesheet —
+about ninety lines, no Tailwind — and the behaviour comes from Livewire's own
+bundled JS, which `@livewireScripts` serves from the vendor directory. `@vite`
+is called only when `App\Support\CompiledAssets::exist()` says there is
+something to include, because `@vite` throws when the manifest is missing and a
+fresh clone would otherwise answer `/kitchen` with a white screen and a stack
+trace. Echo and Reverb are an upgrade layered on top, not a requirement: clone,
+`docker compose up`, open the page, and it works.
+
+`CompiledAssets` checks both `isRunningHot()` and `manifestHash()` because
+neither implies the other — the dev server writes a hot file and no manifest, a
+production build writes a manifest and no hot file.
+
+**`wire:poll` runs the whole time.** It is not a fallback that switches on when
+the websocket drops. A kitchen that has stopped receiving orders cannot tell
+that apart from a quiet evening, and by the time anyone works it out the food is
+already late. Fifteen seconds of stale is recoverable; an evening of it is not.
+`KITCHEN_POLL_SECONDS` tunes it and the component floors it at three.
+
+The header says which of the two is carrying the screen — Live, Reconnecting, or
+Polling — so the answer to "is this thing working?" is on the wall rather than
+in a browser console nobody is going to open.
+
+**Reversal cost:** low. Deleting the inline stylesheet in favour of a built one
+is a one-file change, and the gate degrades to a no-op once a build always
+exists.
