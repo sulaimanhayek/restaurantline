@@ -179,6 +179,30 @@ return [
 
     /*
     |----------------------------------------------------------------------
+    | Kitchen display
+    |----------------------------------------------------------------------
+    |
+    | The screen at /kitchen. It updates over websockets when Reverb is
+    | running and the frontend assets have been built, and falls back to
+    | polling otherwise — see docs/DECISIONS.md #0036.
+    |
+    */
+
+    'kitchen' => [
+        // How often the display re-queries when it cannot hear the websocket.
+        // This is the only thing standing between a kitchen and a screen that
+        // silently stopped updating, so it stays on even when Echo connects.
+        'poll_seconds' => (int) env('KITCHEN_POLL_SECONDS', 15),
+
+        // An order's timer turns amber once it has used this share of its
+        // promised prep time, and red once it is past it. 75 means the chef
+        // sees a warning with a quarter of the time left rather than at the
+        // moment the customer is already waiting.
+        'warn_at_percent' => (int) env('KITCHEN_WARN_AT_PERCENT', 75),
+    ],
+
+    /*
+    |----------------------------------------------------------------------
     | Payments
     |----------------------------------------------------------------------
     |

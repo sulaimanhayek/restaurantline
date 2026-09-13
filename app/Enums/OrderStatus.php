@@ -111,6 +111,74 @@ enum OrderStatus: string implements HasColor, HasLabel
     }
 
     /**
+     * The status one tap on the kitchen display moves this order to.
+     *
+     * `Accepted` is not a step here. It exists in the schema for installs that
+     * want a separate "the kitchen has seen it" acknowledgement, and the
+     * dashboard can still set it — but on a screen somebody uses with wet
+     * hands in a hurry, three taps between a confirmed order and a ready one
+     * is two too many. The display treats `Accepted` and `Confirmed` alike.
+     *
+     * Null means this order has nowhere left to go from a kitchen screen.
+     *
+     * @see docs/DECISIONS.md #0035
+     */
+    public function nextOnKitchenDisplay(): ?self
+    {
+        return match ($this) {
+            self::Confirmed, self::Accepted => self::Preparing,
+            self::Preparing => self::Ready,
+            self::Ready => self::Completed,
+            default => null,
+        };
+    }
+
+    /**
+     * The word on the button that moves this order along.
+     *
+     * Named for what happens next rather than for the status it lands in.
+     * "Preparing" on a button reads as a description of the card you are
+     * looking at; "Start" reads as an instruction, which is what it is.
+     */
+    public function kitchenActionLabel(): ?string
+    {
+        return match ($this->nextOnKitchenDisplay()) {
+            self::Preparing => 'Start',
+            self::Ready => 'Ready',
+            self::Completed => 'Done',
+            default => null,
+        };
+    }
+
+    /**
+     * The column stamped when an order first reaches this status.
+     *
+     * This lives on the enum rather than at the call sites because status is
+     * set from at least four places already — the agent's confirm endpoint,
+     * the dashboard's status dropdown, the kitchen display, and whatever the
+     * fork adds — and a `ready_at` that only some of them fill in is worse
+     * than one nothing fills in: the average-prep-time report built on it
+     * looks right and is wrong.
+     *
+     * OrderObserver::updating() does the stamping. Null means this status
+     * keeps no timestamp of its own; `preparing` is the notable one, since
+     * `confirmed_at` and `ready_at` already bracket it.
+     *
+     * @see docs/DECISIONS.md #0034
+     */
+    public function timestampColumn(): ?string
+    {
+        return match ($this) {
+            self::Confirmed => 'confirmed_at',
+            self::Accepted => 'accepted_at',
+            self::Ready => 'ready_at',
+            self::Completed => 'completed_at',
+            self::Cancelled => 'cancelled_at',
+            default => null,
+        };
+    }
+
+    /**
      * Whether this order counts as a real, customer-agreed order.
      */
     public function isCommitted(): bool

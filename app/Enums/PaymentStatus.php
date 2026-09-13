@@ -54,6 +54,38 @@ enum PaymentStatus: string implements HasColor, HasLabel
         };
     }
 
+    /**
+     * The short form used on a kitchen ticket, where a tag has room for a word.
+     *
+     * `label()` stays the long, unambiguous wording the dashboard needs;
+     * "Cash on collection/delivery" wrapped onto three lines of a card is not
+     * more informative than "Cash" to the person holding the bag.
+     */
+    public function ticketLabel(): string
+    {
+        return match ($this) {
+            self::Unpaid => 'Unpaid',
+            self::LinkSent => 'Link sent',
+            self::Paid => 'Paid',
+            self::CashOnCollection => 'Cash',
+            self::Refunded => 'Refunded',
+            self::Failed => 'Payment failed',
+        };
+    }
+
+    /**
+     * Is there money still to take when this order is handed over?
+     *
+     * Not the inverse of `isSettled()`, and deliberately so. A cash order is
+     * settled in the sense that nothing has gone wrong with it, and still
+     * needs somebody to take the money and count out change — which is the
+     * only thing the person at the pass cares about.
+     */
+    public function isOutstanding(): bool
+    {
+        return in_array($this, [self::Unpaid, self::LinkSent, self::CashOnCollection], true);
+    }
+
     public function isSettled(): bool
     {
         return in_array($this, [self::Paid, self::CashOnCollection], true);
