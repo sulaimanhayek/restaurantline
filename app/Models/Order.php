@@ -8,6 +8,7 @@ use App\Casts\UtcDateTime;
 use App\Enums\FulfilmentType;
 use App\Enums\OrderSource;
 use App\Enums\OrderStatus;
+use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
 use App\Observers\OrderObserver;
 use App\Support\Money;
@@ -39,6 +40,7 @@ use Illuminate\Support\Collection;
  * @property FulfilmentType $fulfilment_type
  * @property OrderStatus $status
  * @property PaymentStatus $payment_status
+ * @property PaymentMethod|null $payment_method
  * @property OrderSource $source
  * @property int $subtotal Minor units
  * @property int $delivery_fee Minor units
@@ -51,6 +53,9 @@ use Illuminate\Support\Collection;
  * @property int|null $conversation_id
  * @property string|null $payment_link_url
  * @property string|null $payment_reference
+ * @property CarbonImmutable|null $payment_link_expires_at
+ * @property CarbonImmutable|null $paid_at
+ * @property int|null $amount_paid Minor units
  * @property CarbonImmutable|null $confirmed_at
  * @property CarbonImmutable|null $accepted_at
  * @property CarbonImmutable|null $ready_at
@@ -64,6 +69,7 @@ use Illuminate\Support\Collection;
  * @property-read Address|null $address
  * @property-read Conversation|null $conversation
  * @property-read Collection<int, OrderItem> $items
+ * @property-read Collection<int, SmsMessage> $smsMessages
  *
  * @method static OrderFactory factory($count = null, $state = [])
  */
@@ -91,12 +97,16 @@ class Order extends Model
             'fulfilment_type' => FulfilmentType::class,
             'status' => OrderStatus::class,
             'payment_status' => PaymentStatus::class,
+            'payment_method' => PaymentMethod::class,
             'source' => OrderSource::class,
             'subtotal' => 'integer',
             'delivery_fee' => 'integer',
             'total' => 'integer',
             'estimated_minutes' => 'integer',
+            'amount_paid' => 'integer',
             'requested_at' => UtcDateTime::class,
+            'payment_link_expires_at' => UtcDateTime::class,
+            'paid_at' => UtcDateTime::class,
             'estimated_ready_at' => UtcDateTime::class,
             'confirmed_at' => UtcDateTime::class,
             'accepted_at' => UtcDateTime::class,
@@ -140,6 +150,12 @@ class Order extends Model
     public function items(): HasMany
     {
         return $this->hasMany(OrderItem::class)->orderBy('sort_order');
+    }
+
+    /** @return HasMany<SmsMessage, $this> */
+    public function smsMessages(): HasMany
+    {
+        return $this->hasMany(SmsMessage::class)->latest('id');
     }
 
     // -----------------------------------------------------------------------

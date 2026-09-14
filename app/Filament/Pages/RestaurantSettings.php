@@ -164,6 +164,41 @@ class RestaurantSettings extends Page
                             ->suffix('minutes'),
                     ]),
 
+                Section::make('Taking payment')
+                    ->columns(2)
+                    /*
+                     * The agent only ever asks the caller how they want to pay
+                     * when both of these are on. With one of them on it picks
+                     * that one and never raises the subject — a question with a
+                     * single possible answer, asked on every call, is how an
+                     * agent starts sounding like a form.
+                     *
+                     * @see docs/DECISIONS.md #0037
+                     */
+                    ->description('Card details are never taken over the phone. A card payment is a link texted after the call; see the README.')
+                    ->schema([
+                        Toggle::make('accepts_card_link')
+                            ->label('Card link by text')
+                            ->helperText('Needs PAYMENT_DRIVER=stripe and a Stripe key. With the fake driver this still works, but the link is a local test page.'),
+
+                        Toggle::make('accepts_cash')
+                            ->label('Cash')
+                            ->helperText('Cash to the driver, or at the counter on collection.'),
+
+                        TextInput::make('payment_link_ttl_minutes')
+                            ->label('Payment link expires after')
+                            ->numeric()
+                            ->minValue(0)
+                            ->maxValue(1440)
+                            ->required()
+                            ->suffix('minutes')
+                            // Stripe will not accept a session expiring sooner
+                            // than 30 minutes or later than 24 hours, so the
+                            // provider clamps anything outside that rather than
+                            // letting the checkout call fail at the till.
+                            ->helperText('0 for links that never expire. Stripe only honours 30 minutes to 24 hours; anything shorter or longer is clamped.'),
+                    ]),
+
                 Section::make('The agent')
                     ->description('Wording the agent uses. Changing it here takes effect on the next call; it does not need a redeploy.')
                     ->schema([

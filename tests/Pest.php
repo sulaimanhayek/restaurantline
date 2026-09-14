@@ -9,6 +9,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
 use Illuminate\Testing\TestResponse;
 use Tests\Support\FakeElevenLabsSignature;
+use Tests\Support\FakeStripeSignature;
 use Tests\TestCase;
 
 /*
@@ -57,9 +58,15 @@ function restaurant(array $attributes = []): Restaurant
 | Agent endpoint helpers
 |--------------------------------------------------------------------------
 |
-| Every test under Feature/Agent hits the tool endpoints as ElevenLabs does:
-| over HTTP, with a bearer token. The token is configured rather than faked,
-| so the middleware under test is the one that runs in production.
+| Every test that hits a tool endpoint does it as ElevenLabs does: over HTTP,
+| with a bearer token. The token is configured rather than faked, so the
+| middleware under test is the one that runs in production.
+|
+| The hook covers the whole of Feature rather than Feature/Agent, because the
+| agent endpoints are how an order comes into existence — a test about payment,
+| the kitchen display or a webhook reaches for `agentPost` to set one up, and
+| scoping the token to one directory means those get a 401, an empty order
+| number, a 404 from a URL with a hole in it, and an afternoon.
 |
 */
 
@@ -67,7 +74,7 @@ const AGENT_TEST_TOKEN = 'test-agent-token';
 
 pest()->beforeEach(function (): void {
     config()->set('restaurantline.agent.token', AGENT_TEST_TOKEN);
-})->in('Feature/Agent');
+})->in('Feature');
 
 /**
  * A POST to a tool endpoint, authenticated unless `$token` says otherwise.
@@ -204,6 +211,41 @@ function postWebhook(array $payload, ?string $signature = null, ?int $timestamp 
                 (string) config('restaurantline.elevenlabs.webhook_secret'),
                 $timestamp,
             ),
+        ],
+        content: $body,
+    );
+
+    return $response;
+}
+
+/**
+ * A signed Stripe webhook, posted the way Stripe posts one.
+ *
+ * `$secrets` is a list rather than a string so the rotation case is reachable:
+ * Stripe signs with every active endpoint secret during a rollover, and the
+ * header carries a `v1` for each. A verifier that reads only the first would
+ * pass every test written against a single secret and reject half of a real
+ * rollover's traffic.
+ *
+ * @param  array<string, mixed>  $payload
+ * @param  list<string>  $secrets
+ * @return TestResponse<Response>
+ */
+function postStripeWebhook(
+    array $payload,
+    ?string $signature = null,
+    array $secrets = ['whsec_stripe_test_secret'],
+    ?int $timestamp = null,
+): TestResponse {
+    $body = (string) json_encode($payload);
+
+    /** @var TestResponse<Response> $response */
+    $response = test()->call(
+        'POST',
+        '/webhooks/stripe',
+        server: [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_STRIPE_SIGNATURE' => $signature ?? FakeStripeSignature::header($body, $secrets, $timestamp),
         ],
         content: $body,
     );

@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\AuthenticateAgent;
-use App\Http\Middleware\VerifyElevenLabsSignature;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -34,9 +33,12 @@ return Application::configure(basePath: dirname(__DIR__))
                 ->group(base_path('routes/agent.php'));
 
             // Outside the web group on purpose: no session, therefore no CSRF
-            // token to fail on, and the signature is the access control.
-            Route::middleware([VerifyElevenLabsSignature::class])
-                ->group(base_path('routes/webhooks.php'));
+            // token to fail on, and a per-sender signature check is the access
+            // control. The middleware is declared on each route rather than on
+            // the group because the senders do not share a secret — an
+            // ElevenLabs verifier in front of Stripe's endpoint would reject
+            // every genuine payment notification.
+            Route::group([], base_path('routes/webhooks.php'));
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {

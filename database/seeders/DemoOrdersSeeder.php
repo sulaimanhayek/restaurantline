@@ -8,7 +8,10 @@ use App\Enums\ConversationOutcome;
 use App\Enums\FulfilmentType;
 use App\Enums\OrderSource;
 use App\Enums\OrderStatus;
+use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
+use App\Enums\SmsKind;
+use App\Enums\SmsStatus;
 use App\Models\Address;
 use App\Models\Conversation;
 use App\Models\Customer;
@@ -18,6 +21,7 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\OrderItemModifier;
 use App\Models\Restaurant;
+use App\Models\SmsMessage;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
@@ -68,6 +72,7 @@ class DemoOrdersSeeder extends Seeder
         $order = $this->order($restaurant, $customer, $conversation, [
             'fulfilment_type' => FulfilmentType::Collection,
             'status' => OrderStatus::Preparing,
+            'payment_method' => PaymentMethod::Cash,
             'payment_status' => PaymentStatus::CashOnCollection,
             'estimated_minutes' => 20,
             'confirmed_at' => now()->subMinutes(9),
@@ -78,6 +83,13 @@ class DemoOrdersSeeder extends Seeder
         $this->line($order, $wings, 1, [$this->modifier($restaurant, 'medium')]);
 
         $this->recalculate($order);
+
+        $this->text($order, SmsKind::OrderConfirmation, sprintf(
+            "Ember Grill: order %s confirmed, %s.\nReady around %s.\nPay by cash when you collect.",
+            $order->order_number,
+            $order->totalMoney()->format(),
+            $order->estimated_ready_at?->copy()->setTimezone($restaurant->timezone)->format('H:i') ?? '',
+        ), sentAt: now()->subMinutes(9));
     }
 
     /**
@@ -121,7 +133,14 @@ class DemoOrdersSeeder extends Seeder
             'fulfilment_type' => FulfilmentType::Delivery,
             'address_id' => $address->id,
             'status' => OrderStatus::Confirmed,
+            'payment_method' => PaymentMethod::CardLink,
             'payment_status' => PaymentStatus::LinkSent,
+            // The fake driver's shape, because that is the driver a fresh
+            // install runs on. Switching PAYMENT_DRIVER to stripe replaces
+            // these with a real Checkout session on the next order.
+            'payment_link_url' => url('/pay/fake_9f2c41ab7d0e4c18b3a55e77'),
+            'payment_reference' => 'fake_9f2c41ab7d0e4c18b3a55e77',
+            'payment_link_expires_at' => now()->addMinutes(58),
             'estimated_minutes' => 45,
             'confirmed_at' => now()->subMinutes(2),
             'delivery_fee' => 199,
@@ -136,6 +155,23 @@ class DemoOrdersSeeder extends Seeder
         $this->line($order, $chips, 1, [$this->modifier($restaurant, 'large')]);
 
         $this->recalculate($order);
+
+        $this->text($order, SmsKind::OrderConfirmation, sprintf(
+            "Ember Grill: order %s confirmed, %s.\nDelivery around %s.\nPay here: %s",
+            $order->order_number,
+            $order->totalMoney()->format(),
+            $order->estimated_ready_at?->copy()->setTimezone($restaurant->timezone)->format('H:i') ?? '',
+            $order->payment_link_url,
+        ), sentAt: now()->subMinutes(2));
+
+        // Sent again from the dashboard, which is what the button on the order
+        // does and the commonest support call this application generates.
+        $this->text($order, SmsKind::PaymentLink, sprintf(
+            'Ember Grill: pay %s for order %s here: %s',
+            $order->totalMoney()->format(),
+            $order->order_number,
+            $order->payment_link_url,
+        ), sentAt: now()->subMinute());
     }
 
     /**
@@ -154,6 +190,7 @@ class DemoOrdersSeeder extends Seeder
         $order = $this->order($restaurant, $customer, $conversation, [
             'fulfilment_type' => FulfilmentType::Collection,
             'status' => OrderStatus::Completed,
+            'payment_method' => PaymentMethod::Cash,
             'payment_status' => PaymentStatus::Paid,
             'estimated_minutes' => 20,
             'confirmed_at' => now()->subDay(),
@@ -170,6 +207,19 @@ class DemoOrdersSeeder extends Seeder
         ]);
 
         $this->recalculate($order);
+
+        /*
+         * The one that did not go out, so the failure state is on the screen
+         * from the first boot rather than the first bad evening. It is also
+         * the whole argument for recording a failed text rather than throwing
+         * one: the order was made, collected and paid for regardless.
+         */
+        $this->text(
+            $order,
+            SmsKind::OrderConfirmation,
+            sprintf('Ember Grill: order %s confirmed, %s.', $order->order_number, $order->totalMoney()->format()),
+            error: 'The destination handset is not reachable (carrier code 30005).',
+        );
     }
 
     /**
@@ -315,6 +365,39 @@ class DemoOrdersSeeder extends Seeder
         }
 
         return $line;
+    }
+
+    /**
+     * One text, recorded the way the dispatcher records one.
+     *
+     * Written here rather than by actually sending, because seeding must not
+     * depend on a provider being configured — and with SMS_DRIVER=log, which is
+     * what a fresh install runs on, a real send would put the demo data in the
+     * log file instead of on the screen.
+     */
+    private function text(
+        Order $order,
+        SmsKind $kind,
+        string $body,
+        ?Carbon $sentAt = null,
+        ?string $error = null,
+    ): SmsMessage {
+        $failed = $error !== null;
+
+        return SmsMessage::query()->create([
+            'restaurant_id' => $order->restaurant_id,
+            'order_id' => $order->id,
+            'customer_id' => $order->customer_id,
+            'to_number' => $order->customer->phone_number ?? '',
+            'kind' => $kind,
+            'status' => $failed ? SmsStatus::Failed : SmsStatus::Sent,
+            'body' => $body,
+            'provider' => 'log',
+            'provider_message_id' => $failed ? null : 'log_'.Str::lower(Str::random(24)),
+            'error' => $error,
+            'sent_at' => $failed ? null : ($sentAt ?? now()),
+            'created_at' => $sentAt ?? $order->confirmed_at ?? now(),
+        ]);
     }
 
     private function recalculate(Order $order): void

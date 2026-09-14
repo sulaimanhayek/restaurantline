@@ -1106,3 +1106,121 @@ in a browser console nobody is going to open.
 **Reversal cost:** low. Deleting the inline stylesheet in favour of a built one
 is a one-file change, and the gate degrades to a no-op once a build always
 exists.
+
+
+## 0037 — The restaurant declares which payment methods it takes; the agent asks only when there are two
+
+Restaurants get `accepts_card_link` and `accepts_cash`. If one is on, the
+application picks it and the agent is never told the other exists. If both are
+on, the agent asks, and `POST /api/agent/orders/{number}/confirm` takes an
+optional `payment_method` field which is required only in that case —
+`ConfirmOrderRequest::rules()` reads the restaurant to decide.
+
+The alternatives were a global config constant (wrong the moment a second
+restaurant is onboarded, and the schema is multi-tenant from day one), always
+asking (a question with one possible answer, asked on every call, to a caller
+who is standing in a kitchen), or letting the model decide (a cash-only shop
+texting Stripe links because the prompt drifted).
+
+Three consequences worth stating, because each is a rule some other part of the
+code depends on:
+
+- When the restaurant offers one method, whatever the agent sent is **discarded**
+  rather than validated. It was never told about the other method, so anything
+  it sends about it is noise. `ConfirmOrderRequest::paymentMethod()` is the only
+  thing that decides.
+- A restaurant with neither flag set falls back to cash. That is a
+  misconfiguration, not a supported setting, and the order is real and the
+  caller is waiting — somebody can take money at the door, and nobody can take
+  money for an order that was never confirmed.
+- There is no third case. `PaymentMethod` has two arms and the absence of a
+  "card taken by phone" arm is deliberate and load-bearing; see
+  `app/Services/Payments/README.md`.
+
+Payment is settled at **confirmation**, not at creation. The order exists in
+`confirming` while the total is read back, and the method is part of the yes.
+
+**Reversal cost:** low for the flags, higher for the endpoint. Adding a method
+is an enum case, a column and a `match` arm. Making `payment_method`
+unconditionally required would be a breaking change to a tool contract that is
+already in an agent's configuration.
+
+
+## 0038 — The confirmation SMS and the payment link run in one job, after the response, and are allowed to fail
+
+`SendOrderConfirmation` creates the payment link, texts the customer, and writes
+the message down. It is dispatched with `dispatchAfterResponse()` rather than
+`dispatch()`: running one restaurant on `QUEUE_CONNECTION=sync` is a perfectly
+reasonable choice, and a caller still holding the phone should not be listening
+to silence through a Stripe round trip and a Twilio one.
+
+The failure handling is the substance of this decision, and it is deliberately
+different in each direction:
+
+- **A text that will not send is recorded, not thrown.** A mistyped number or a
+  landline is a normal operational event and the caller has already hung up. The
+  `sms_messages` row carries the provider's own error so the person in the
+  dashboard can see why and press send again. The row is written as `queued`
+  *before* the send and updated after, so a worker killed mid-request leaves "we
+  do not know" rather than "we never tried".
+- **A link that will not create is thrown, retried, and then abandoned in favour
+  of cash.** Stripe having a bad thirty seconds is worth three attempts over two
+  minutes. Anything still failing after that is a configuration problem retrying
+  will not fix, and an order left unpaid with no link is the one outcome nobody
+  can act on — the customer has nothing to tap and the driver has not been told
+  to collect. Cash is a worse margin and a completed order.
+
+`payment_status` becomes `link_sent` only when the text carrying the link
+actually went out, not when Stripe returned a URL. A customer chasing a link
+they never received is asking about the message.
+
+Nothing in this job decides whether the kitchen cooks the food. The order is
+already `confirmed` in the database before it runs, which is what makes all of
+the above safe.
+
+The dashboard's "text the link again" button is the manual counterpart, and it
+**resends the link the order already has** rather than creating a new one. Two
+live Checkout sessions for one order is two ways to pay for one dinner, and the
+webhook that marks it paid quotes only one of them. It is hidden on an order
+that has been paid, and it reads back the row the dispatcher wrote rather than
+reporting success on a text the provider refused.
+
+**Reversal cost:** low. Splitting it into two jobs, or moving it inline, is a
+change to one file.
+
+
+## 0039 — Each webhook route declares its own verifier, and the Stripe one accepts several signatures
+
+`routes/webhooks.php` is registered with `Route::group([], …)` and each route
+names its own middleware. Putting `VerifyElevenLabsSignature` on the group — the
+obvious thing, and what this repo did until Stripe arrived — would reject every
+genuine payment notification with a 401, because the two senders do not share a
+secret. The comment in `bootstrap/app.php` says so, since the group form is what
+somebody adding a third webhook will reach for.
+
+Both verifiers are hand-written rather than delegated to an SDK. The check is
+thirty lines, the repo now contains two near-identical versions of it, and a
+forker adding a fourth learns the pattern by reading them in a way that a call
+into `Webhook::constructEvent` does not teach. Both hash the **raw** body, both
+use `hash_equals`, both enforce a timestamp tolerance, and both **fail closed**
+when their secret is unset — an install with no secret must not be accepting
+payment notifications from strangers.
+
+The one thing the Stripe verifier does that its twin does not is collect *every*
+`v1` value from the header. Stripe signs with all active endpoint secrets during
+a rotation, and a parser that read only the first would pass every test written
+against a single secret and then reject half the traffic for the length of the
+rollover — a payment endpoint failing silently for hours.
+
+`StripeWebhookController` runs inline rather than queueing. The work is one
+indexed lookup and an update, well inside Stripe's timeout, and doing it inline
+means the order is already green by the time the customer's browser lands back
+on the return page. It answers 200 to an event it does not handle or cannot
+parse: the signature proved it came from Stripe, and a non-2xx would start a
+retry storm for an event this install can never do anything with.
+
+This endpoint is the only way an order reaches `paid`. Nothing in the voice flow,
+the agent tools or the dashboard's normal path can set it, because none of them
+knows whether money moved.
+
+**Reversal cost:** low. Swapping either verifier for an SDK call is one file.

@@ -172,6 +172,11 @@ return [
     'sms' => [
         // log | twilio
         'driver' => env('SMS_DRIVER', 'log'),
+
+        // Seconds. Short on purpose: this runs on a queue behind a call that
+        // has already ended, and a worker blocked on a hung provider is a
+        // worker not sending anybody else's confirmation.
+        'timeout' => (int) env('SMS_TIMEOUT', 10),
     ],
 
     // Where a caller is transferred when they ask for a human. E.164.
@@ -214,9 +219,25 @@ return [
     'payments' => [
         // fake | stripe
         'driver' => env('PAYMENT_DRIVER', 'fake'),
+
+        'timeout' => (int) env('PAYMENT_TIMEOUT', 15),
+
+        /*
+         * The fake driver hands out links to a page in this application that
+         * marks an order paid, which is exactly what you want on a laptop and
+         * exactly what you do not want facing the internet. It refuses to run
+         * in production unless this is set, and the only honest reason to set
+         * it is a restaurant that takes no card payments at all.
+         */
+        'allow_fake_in_production' => (bool) env('PAYMENTS_ALLOW_FAKE_IN_PRODUCTION', false),
+
         'stripe' => [
             'secret' => env('STRIPE_SECRET'),
             'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+
+            // How far out of step with Stripe's clock a webhook may be before
+            // it is treated as a replay. Stripe's own recommendation.
+            'webhook_tolerance' => (int) env('STRIPE_WEBHOOK_TOLERANCE', 300),
         ],
     ],
 

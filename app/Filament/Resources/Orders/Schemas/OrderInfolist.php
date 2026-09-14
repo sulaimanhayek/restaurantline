@@ -141,6 +141,10 @@ class OrderInfolist
             Section::make('Payment')
                 ->schema([
                     Grid::make(3)->schema([
+                        // Settled at confirmation, from what the restaurant
+                        // accepts — the agent is only asked when there is more
+                        // than one answer. See docs/DECISIONS.md #0037.
+                        TextEntry::make('payment_method')->label('Method')->badge()->placeholder('Not confirmed'),
                         TextEntry::make('payment_status')->label('Status')->badge(),
                         TextEntry::make('payment_reference')->label('Reference')->placeholder('—'),
                         TextEntry::make('payment_link_url')
@@ -148,6 +152,14 @@ class OrderInfolist
                             ->placeholder('—')
                             ->url(fn (?string $state): ?string => $state)
                             ->openUrlInNewTab(),
+                        TextEntry::make('payment_link_expires_at')
+                            ->label('Link expires')
+                            ->dateTime()
+                            ->placeholder('—')
+                            // An expired link is the commonest reason a
+                            // customer says the page "didn't work", and it is
+                            // invisible unless the date is on the screen.
+                            ->color(fn (Order $record): string => $record->payment_link_expires_at?->isPast() === true ? 'danger' : 'gray'),
                     ]),
                 ])
                 /*
@@ -157,6 +169,22 @@ class OrderInfolist
                  * See the README's payment section.
                  */
                 ->description('Card details are never taken over the phone. This is a link or cash on delivery.'),
+
+            Section::make('Texts')
+                ->description('Every message this order sent, as the customer received it.')
+                ->visible(fn (Order $record): bool => $record->smsMessages()->exists())
+                ->schema([
+                    RepeatableEntry::make('smsMessages')
+                        ->hiddenLabel()
+                        ->columns(4)
+                        ->schema([
+                            TextEntry::make('created_at')->label('When')->dateTime('j M, H:i'),
+                            TextEntry::make('status')->badge(),
+                            TextEntry::make('kind')->label('Why')->badge(),
+                            TextEntry::make('error')->label('Refused because')->placeholder('—')->color('danger'),
+                            TextEntry::make('body')->hiddenLabel()->columnSpanFull()->color('gray'),
+                        ]),
+                ]),
 
             Section::make('Timings')
                 ->collapsed()
