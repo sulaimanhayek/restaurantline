@@ -51,7 +51,9 @@ use Illuminate\Support\Collection;
  * @property string|null $elevenlabs_agent_id
  * @property array<string, string>|null $elevenlabs_tool_ids
  * @property CarbonImmutable|null $provisioned_at
- * @property string|null $twilio_phone_number_sid
+ * @property string|null $elevenlabs_secret_id
+ * @property string|null $elevenlabs_webhook_id
+ * @property string|null $elevenlabs_phone_number_id
  * @property CarbonImmutable $created_at
  * @property CarbonImmutable $updated_at
  * @property-read Collection<int, OpeningHour> $openingHours

@@ -31,8 +31,9 @@ return [
     | Agent tool endpoints
     |----------------------------------------------------------------------
     |
-    | The tools under /api/agent are authenticated with a static bearer token
-    | that `kitchenline:provision` writes into each tool definition.
+    | The tools under /api/agent are authenticated with a static bearer token.
+    | `kitchenline:provision` uploads it once as an ElevenLabs workspace secret
+    | and points all nine tool definitions at it by id — see DECISIONS #0041.
     |
     */
 
@@ -139,8 +140,26 @@ return [
         'base_url' => env('ELEVENLABS_BASE_URL', 'https://api.elevenlabs.io'),
         'llm' => env('ELEVENLABS_AGENT_LLM', 'gpt-4o-mini'),
         'voice_id' => env('ELEVENLABS_VOICE_ID'),
+
+        // Flash, because on a phone call latency is the experience. Any of the
+        // eleven_* conversational models is valid here.
+        'tts_model' => env('ELEVENLABS_TTS_MODEL', 'eleven_flash_v2_5'),
+
+        // The agent's language, as an ISO 639-1 code.
+        'language' => env('ELEVENLABS_AGENT_LANGUAGE', 'en'),
+
+        // The ceiling on a single call, in seconds. Not a feature — a limit on
+        // what one stuck conversation can cost.
+        'max_call_seconds' => (int) env('ELEVENLABS_MAX_CALL_SECONDS', 600),
         'webhook_secret' => env('ELEVENLABS_WEBHOOK_SECRET'),
         'webhook_tolerance' => (int) env('ELEVENLABS_WEBHOOK_TOLERANCE', 1800),
+
+        /*
+         * Only the provisioning commands spend this. Generous, because a person
+         * is watching the output and a timeout halfway through creating nine
+         * tools is more annoying than a slow one.
+         */
+        'timeout' => (int) env('ELEVENLABS_TIMEOUT', 30),
 
         /*
          * Where call recordings are written.

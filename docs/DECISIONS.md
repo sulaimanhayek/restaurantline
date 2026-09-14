@@ -1224,3 +1224,257 @@ the agent tools or the dashboard's normal path can set it, because none of them
 knows whether money moved.
 
 **Reversal cost:** low. Swapping either verifier for an SDK call is one file.
+
+---
+
+## 0040 — The ElevenLabs API, re-verified against the OpenAPI spec, and what it changed
+
+Entry #0006 recorded findings taken from the documentation pages on 2026-09-06.
+Phase 8 is the first code that actually calls this API, so the surface was
+checked again on 2026-09-14 — this time against
+`https://api.elevenlabs.io/openapi.json` rather than the rendered docs, because
+the rendered pages disagree with the spec in at least one place that would have
+cost an afternoon.
+
+### The authentication header is `xi-api-key`
+
+The rendered API-reference pages for several Convai endpoints describe
+`Authorization: Bearer <key>`. That is wrong. The authentication page says
+`xi-api-key`, and the spec agrees: every operation declares a header parameter
+named `xi-api-key` and the document has no `securitySchemes` block at all.
+`ElevenLabsClient` sends `xi-api-key` and nothing else.
+
+### Tool parameter schemas are not JSON Schema
+
+This is the one worth reading twice. `path_params_schema`,
+`query_params_schema` and `request_body_schema` look like JSON Schema and are
+not. They are ElevenLabs' own `LiteralJsonSchemaProperty`,
+`ObjectJsonSchemaProperty` and `ArrayJsonSchemaProperty`, and the differences
+bite:
+
+- An object or array property carries **`property_kind`** (`"object"` /
+  `"array"`) alongside `type`.
+- An array's `items` is a **single** schema object, never a list.
+- There is no `additionalProperties`, no `$ref`, no `oneOf`/`anyOf`, and no
+  nullable union. A property is one type.
+- `enum` exists only on a literal property whose `type` is `string`.
+- `description` on a property means *the LLM supplies this value*. It is
+  **mutually exclusive** with `constant_value`, `dynamic_variable`,
+  `is_system_provided` and `is_omitted`.
+
+`ToolDefinitions` builds these through named helpers rather than array literals,
+so the shape is stated once and the nine tools cannot drift from it.
+
+### `dynamic_variable` removes `conversation_id` from the LLM's job
+
+Every tool endpoint here takes a `conversation_id`, and the obvious reading of
+the API is to describe it and let the model fill it in. It should not. A literal
+property may instead name a **dynamic variable**, and the platform substitutes
+the value at call time. Setting `dynamic_variable: "system__conversation_id"`
+means the field is always present, always correct, and never a token the model
+spends attention on — and it is the same identifier the post-call webhook
+reports, so a tool call and the transcript it came from join up without the
+model having been trusted to copy a string.
+
+The other system variables available are `system__caller_id`,
+`system__called_number`, `system__agent_id`, `system__call_duration_secs` and
+`system__call_sid` (#0006).
+
+### Post-call webhooks are a REST resource, and provisioning can create one
+
+#0006 recorded the post-call webhook as configured in the dashboard. It is now
+`POST /v1/workspace/webhooks` with
+`{ "settings": { "auth_type": "hmac", "name": …, "webhook_url": … } }`,
+answering `{ "webhook_id": …, "webhook_secret": … }`.
+
+That response is the reason this matters: **the HMAC secret comes back exactly
+once**, on creation. `kitchenline:provision` prints it as the value for
+`ELEVENLABS_WEBHOOK_SECRET` and says plainly that it will not be shown again. It
+is not written to `.env` automatically — a command that edits a developer's
+environment file is a command that eventually eats one.
+
+Attaching it is a second call. A workspace-wide default is
+`PATCH /v1/convai/settings` with `webhooks.post_call_webhook_id`; per agent it
+is the same `ConvAIWebhooks` object at
+`platform_settings.workspace_overrides.webhooks`. **We use the per-agent form**,
+because the schema here has been multi-tenant-shaped since #0005 and a
+workspace-level setting is the one piece of this wiring that a second restaurant
+could not have its own of. The events requested are `transcript`,
+`audio` and `call_initiation_failure` — the three the webhook job already
+handles.
+
+### Phone numbers can be imported over the API after all
+
+#0006 said Twilio attachment was documented only as a dashboard flow and that
+provisioning would print it as a manual step. That is no longer true:
+`POST /v1/convai/phone-numbers` takes `{phone_number, label, sid, token,
+provider: "twilio", agent_id}` and answers `{ "phone_number_id": … }`, assigning
+the agent in the same call.
+
+The command still does not do it by default. Importing a number hands a
+third-party platform live Twilio credentials and changes who answers a phone
+that customers are calling, which is not something a provisioning command should
+do because it was run with no arguments. It happens only behind
+`--phone-number=` and only after a confirmation naming the number — and the
+Twilio credentials come from the environment, never from the command line, where
+they would land in a shell history.
+
+### The bearer token is stored as a workspace secret, not pasted into nine tools
+
+`POST /v1/convai/secrets` takes `{type: "new", name, value}` and answers
+`{type: "stored", secret_id, name}`. A tool's `request_headers` accepts either a
+literal string or a `ConvAISecretLocator`, which is just `{"secret_id": …}`.
+
+So `AGENT_API_TOKEN` is uploaded once and referenced nine times. The alternative
+— #0006's "writes the token into each tool definition" — puts the same secret in
+plaintext in nine places, and rotating it means remembering all nine.
+
+### Smaller things that constrain the definitions
+
+- A tool name must match `^[a-zA-Z0-9_-]{1,64}$`. No spaces, no dots. The nine
+  are named after their routes: `search_menu`, `show_menu`, `check_availability`,
+  `opening_hours`, `validate_address`, `quote_order`, `create_order`,
+  `confirm_order`, `escalate_to_human`.
+- `response_timeout_secs` is an integer from **5 to 300**, default 20. Ours stay
+  at the default; a caller will not wait twenty seconds either, but the number
+  that matters for a voice call is how fast the endpoint is, not how long the
+  platform is willing to wait.
+- Agent creation is `POST /v1/convai/agents/create` (not a plain POST to the
+  collection) answering `{agent_id}`; updates are `PATCH /v1/convai/agents/{id}`
+  and are a genuine partial patch.
+- Tools are `POST /v1/convai/tools` and `PATCH /v1/convai/tools/{tool_id}`, both
+  wrapping the config in `{"tool_config": …}` and both answering `{id, …}`.
+- `llm` accepts 98 values; `gpt-4o-mini` — this repo's default — is one of them.
+
+### Still not verified
+
+The signature *wire format* for post-call webhooks. The docs continue to
+delegate verification to their SDKs and do not state it on the page, and it is
+not in the OpenAPI spec either, since it describes requests **to** ElevenLabs
+rather than **from** it. The `t=…,v0=…` format in #0006 remains corroborated but
+unconfirmed against a live signed request. Provisioning does not change this;
+re-check it the first time a real webhook arrives.
+
+**Reversal cost:** low for everything except the per-agent webhook choice, which
+is a different field on a different endpoint but the same two lines.
+
+## 0041 — Provisioning and menu import: what the two commands promise
+
+**Date:** 2026-09-14
+**Status:** accepted
+
+Phase 8 is two Artisan commands, and both of them are things a person runs
+repeatedly while a restaurant changes its mind. Everything below follows from
+that one fact.
+
+### `kitchenline:provision` is idempotent, and that is the whole feature
+
+A forker runs it after every change to the tool routes, after every edit to the
+tone of voice, and once by accident. None of those may leave a workspace holding
+eighteen tools, two agents and two webhooks posting every call twice. So every
+id it creates is remembered on the `restaurants` row, and every remembered id is
+read back before it is reused — a tool deleted in somebody's dashboard is
+treated as absent rather than as a fatal 404. The webhook is matched on its
+**URL** rather than on the remembered id, because two webhooks pointing at the
+same endpoint are the same webhook whoever made them, and the failure worth
+preventing is a duplicate conversation record for every call.
+
+The one thing it will not do twice is attach a phone number. That step changes
+who answers when a customer rings, so it lives behind `--phone-number=` and a
+confirmation naming the number.
+
+### The secret holds `Bearer <token>`, not the token
+
+A `ConvAISecretLocator` substitutes the **whole** header value; there is no
+interpolation, so `Authorization: Bearer {{secret}}` is not expressible. The
+stored value is therefore the complete header. It is rewritten on every run,
+because a secret store cannot be read back to compare — which is also what makes
+rotation a one-liner: change `AGENT_API_TOKEN`, provision again, and the nine
+tools never move.
+
+### The fake ElevenLabs client ships, and keeps its workspace in the cache
+
+`ELEVENLABS_DRIVER=fake` is the default, and the fake lives in `app/` rather
+than `tests/` because the first hour with this repo is `docker compose up` and
+`kitchenline:provision`, and that hour should end with a developer reading the
+nine tool definitions and the system prompt this application would have sent.
+Signing up is the second hour.
+
+Its workspace is held in the cache rather than in the object, because a
+provisioning run is a whole process: a fake that forgot everything between two
+`artisan` invocations could not demonstrate the only behaviour worth
+demonstrating, which is that the second run creates nothing. In the suite
+`CACHE_STORE=array`, so each test gets an empty workspace with no cleanup to
+remember. `php artisan cache:clear` is how you throw one away.
+
+### `restaurants.twilio_phone_number_sid` is gone
+
+#0006 assumed Twilio would be wired up by hand in a dashboard. It is not — see
+#0040 — and the id that matters is ElevenLabs' `phone_number_id`. The migration
+drops the old column and adds `elevenlabs_secret_id`, `elevenlabs_webhook_id`
+and `elevenlabs_phone_number_id` beside it. Nothing had ever written to the old
+one.
+
+### Menu prices are always in major units. Always
+
+`6.50` is six pounds fifty, and so is `"£6.50"`, and `6` is six pounds. Never
+pence, in any format, with no exceptions and no per-file switch. One rule that
+is occasionally surprising beats a clever one that is occasionally wrong by a
+factor of a hundred, and `--dry-run` prints every price formatted so a misread
+costs a glance rather than an evening.
+
+### CSV can reference modifier groups but cannot define them
+
+A group is a set with selection rules and its own prices, and every way of
+flattening that into a spreadsheet row is worse than writing the JSON. So a CSV
+row may name groups by slug in a pipe-separated `modifier_groups` cell, and the
+groups themselves come from JSON or from the dashboard. The common path — import
+the dishes from the spreadsheet the owner emailed, add the sizes afterwards —
+works without a second import format nobody would enjoy.
+
+### A key the file does not mention means "leave it alone", never "set it to null"
+
+This is what makes a CSV of new prices safe to import over a menu whose extras
+were configured in the dashboard. The mirror case is deliberate: an **empty**
+`modifier_groups` array does detach every group, because that is somebody saying
+something rather than saying nothing.
+
+### `--prune` deactivates; it never deletes
+
+Anything the file does not mention has `is_available` or `is_active` turned off.
+Deleting would take order history with it — items are referenced by
+`order_items` — and "we do not do that any more" is what a restaurant means, not
+"that never existed".
+
+### The import is one transaction, and `--dry-run` is a rollback
+
+A menu half-applied because row two hundred had a typo is worse than no import
+at all: the agent would spend the evening confidently quoting a menu nobody
+meant to publish. And `--dry-run` runs the real code path inside a transaction
+it always rolls back, rather than predicting what an import would do — so
+validation, slug collisions and unique constraints are all genuinely exercised.
+Rolling a real import back is far more honest than a second code path.
+
+### Identity is the slug, scoped to the restaurant — and modifier slugs carry their group
+
+`firstOrNew(['slug' => …])` on the restaurant's own relation. Modifier slugs are
+prefixed with their group's slug, so `size-large` and `drink-size-large` can
+coexist; "Large" is an ordinary name for an option in several groups at once.
+
+### Two normalisations that idempotence turned out to depend on
+
+Both were found by running the same import twice and getting "1 updated" the
+second time.
+
+- **`available_days` is 0 = Sunday … 6 = Saturday** in this codebase, matching
+  `Carbon::dayOfWeek` and `MenuCategory::isServedAt()`. It is **not** ISO 8601,
+  which starts the week on Monday at 1. The importer enforces 0–6 and says so in
+  the error, because getting this wrong silently takes a lunch menu off on the
+  one day the restaurant is busiest.
+- Postgres `time` columns hand back `HH:MM:SS`. `"17:00"` is what a person
+  writes, so the importer normalises before comparing; without it every category
+  with opening times is dirty on every import.
+
+**Reversal cost:** low throughout. The one choice that would be awkward to undo
+is prices-in-major-units, which is baked into two commands, a fixture pair and a
+page of tests — and is the one nobody should want to undo.
