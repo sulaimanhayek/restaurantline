@@ -1,0 +1,67 @@
+{
+    "title": "A call at three in the morning",
+    "at": "03:00",
+    "description": [
+        "The kitchen is shut, and it is shut at three in the morning on every day of",
+        "the week, which is why this scenario can name a time and not a date.",
+        "",
+        "create_order checks the hours itself rather than trusting the agent to have",
+        "called check_availability first. Without that check, a call at three books",
+        "an order for lunch, tells the caller it will be forty-five minutes, and",
+        "leaves a ticket the kitchen finds when it opens."
+    ],
+    "tags": ["hours", "failure-path", "collection"],
+    "caller": [
+        "It is the middle of the night. You are hungry and you want a burger and chips",
+        "for collection. Your name is Sam Iversen and your number is 07700 900190.",
+        "If you are told they are closed, ask what time they open."
+    ],
+    "calls": [
+        {
+            "tool": "check_availability",
+            "params": { "fulfilment": "collection" },
+            "expect": {
+                "ok": false,
+                "error": "closed",
+                "open_now": false,
+                "say_contains": "we're closed"
+            }
+        },
+        {
+            "tool": "opening_hours",
+            "expect": { "ok": true }
+        },
+        {
+            "tool": "create_order",
+            "note": "Even with everything else right, a shut kitchen refuses.",
+            "params": {
+                "fulfilment": "collection",
+                "customer": { "phone_number": "07700900190", "name": "Sam Iversen" },
+                "items": [
+                    { "item": "ember-chicken-burger", "quantity": 1 },
+                    { "item": "chips", "quantity": 1 }
+                ]
+            },
+            "expect": { "ok": false, "error": "closed", "say_contains": "closed" }
+        }
+    ],
+    "expect": {
+        "tools_called": ["check_availability", "opening_hours", "create_order"],
+        "no_order": true
+    },
+    "criteria": [
+        {
+            "name": "Said it was closed and when it opens",
+            "goal": [
+                "The agent told the caller the restaurant was closed and gave them the next time it",
+                "opens, rather than taking the order or giving a wait time."
+            ]
+        },
+        {
+            "name": "Did not take the order anyway",
+            "goal": [
+                "The agent did not give out an order number or say the order had been placed."
+            ]
+        }
+    ]
+}

@@ -1,0 +1,130 @@
+{
+    "title": "A delivery order, paid by link",
+    "description": [
+        "The other ordinary case, and the one with more moving parts: an address has",
+        "to be geocoded, read back, agreed to, sealed into a token and carried through",
+        "two more calls before it becomes a row. The delivery fee comes off the",
+        "distance band rather than a flat rate, so this is also the scenario that",
+        "notices if the bands stop being consulted."
+    ],
+    "tags": ["smoke", "delivery", "happy-path"],
+    "caller": [
+        "You want a double beef burger with no onions, a large chips, and two cans of Coke.",
+        "You want it delivered to 3 Hanbury Street, E1 6QR.",
+        "Your name is Priya Raman and your number is 07700 900212.",
+        "When you are asked how you want to pay, you would rather have a link texted to you",
+        "than pay cash at the door."
+    ],
+    "calls": [
+        {
+            "tool": "check_availability",
+            "params": { "fulfilment": "delivery" },
+            "expect": { "ok": true }
+        },
+        {
+            "tool": "validate_address",
+            "note": "The token from the first candidate is bound to {{address_token}} automatically.",
+            "params": { "spoken": "3 Hanbury Street, E1 6QR" },
+            "expect": { "ok": true }
+        },
+        {
+            "tool": "quote_order",
+            "params": {
+                "fulfilment": "delivery",
+                "address_token": "{{address_token}}",
+                "items": [
+                    {
+                        "item": "double-beef-burger",
+                        "quantity": 1,
+                        "modifiers": [
+                            { "modifier": "brioche-bun" },
+                            { "modifier": "onions" },
+                            { "modifier": "chips" }
+                        ]
+                    },
+                    { "item": "chips", "quantity": 1, "modifiers": [{ "modifier": "large" }] },
+                    { "item": "coca-cola", "quantity": 2, "modifiers": [{ "modifier": "can" }] }
+                ]
+            },
+            "expect": { "ok": true }
+        },
+        {
+            "tool": "create_order",
+            "note": "address_confirmed is the agent asserting the caller heard the address read back.",
+            "params": {
+                "fulfilment": "delivery",
+                "address_token": "{{address_token}}",
+                "address_confirmed": true,
+                "customer": { "phone_number": "07700900212", "name": "Priya Raman" },
+                "items": [
+                    {
+                        "item": "double-beef-burger",
+                        "quantity": 1,
+                        "modifiers": [
+                            { "modifier": "brioche-bun" },
+                            { "modifier": "onions" },
+                            { "modifier": "chips" }
+                        ]
+                    },
+                    { "item": "chips", "quantity": 1, "modifiers": [{ "modifier": "large" }] },
+                    { "item": "coca-cola", "quantity": 2, "modifiers": [{ "modifier": "can" }] }
+                ]
+            },
+            "expect": { "ok": true }
+        },
+        {
+            "tool": "confirm_order",
+            "params": { "order": "{{order_number}}", "payment_method": "card_link" },
+            "expect": { "ok": true, "say_contains": "payment link" }
+        }
+    ],
+    "expect": {
+        "tools_called": ["validate_address", "quote_order", "create_order", "confirm_order"],
+        "tools_not_called": ["escalate_to_human"],
+        "order": {
+            "status": "confirmed",
+            "fulfilment": "delivery",
+            "payment_method": "card_link",
+            "payment_status": "unpaid",
+            "confirmed": true,
+            "subtotal": 18.60,
+            "delivery_fee": 1.99,
+            "total": 20.59,
+            "items": [
+                {
+                    "slug": "double-beef-burger",
+                    "quantity": 1,
+                    "line_total": 10.50,
+                    "modifiers": ["Brioche Bun", "Onions", "Chips"]
+                },
+                { "slug": "chips", "quantity": 1, "line_total": 4.50, "modifiers": ["Large"] },
+                { "slug": "coca-cola", "quantity": 2, "line_total": 3.60, "modifiers": ["Can"] }
+            ]
+        },
+        "escalated": false
+    },
+    "criteria": [
+        {
+            "name": "Read the address back before using it",
+            "goal": [
+                "The agent read the matched delivery address back to the caller and the caller agreed",
+                "to it, before the order was created. Mark this a failure if the agent went straight",
+                "from hearing the address to placing the order."
+            ]
+        },
+        {
+            "name": "Read the order back before creating it",
+            "goal": [
+                "Before the agent said the order was placed or gave out an order number, it read the",
+                "whole order back — every dish, the delivery fee and the total — and the caller agreed."
+            ]
+        },
+        {
+            "name": "Never asked for card details",
+            "goal": [
+                "The agent did not ask for a card number, expiry date or security code. It offered to",
+                "text a payment link, which is the correct way to take a card for this restaurant."
+            ]
+        }
+    ]
+}

@@ -141,6 +141,54 @@ final class ApiElevenLabsClient implements ElevenLabsClient
     }
 
     // -----------------------------------------------------------------------
+    // Simulation
+    // -----------------------------------------------------------------------
+
+    public function simulateConversation(
+        string $agentId,
+        array $simulationSpecification,
+        array $evaluationCriteria = [],
+        ?int $turnLimit = null,
+    ): array {
+        $payload = ['simulation_specification' => $simulationSpecification];
+
+        if ($evaluationCriteria !== []) {
+            $payload['extra_evaluation_criteria'] = $evaluationCriteria;
+        }
+
+        if ($turnLimit !== null) {
+            $payload['new_turns_limit'] = $turnLimit;
+        }
+
+        /*
+         * Its own timeout, because this one request is a whole conversation:
+         * two language models taking turns, with a round trip to this
+         * application on every tool call. The thirty seconds that is generous
+         * for creating a tool would cut off every simulation there is.
+         */
+        $path = '/v1/convai/agents/'.rawurlencode($agentId).'/simulate-conversation';
+
+        try {
+            $response = $this->request()
+                ->timeout((int) config('restaurantline.elevenlabs.simulation_timeout', 300))
+                ->post($this->url($path), $payload);
+        } catch (ConnectionException $exception) {
+            throw new ElevenLabsException('Could not reach ElevenLabs: '.$exception->getMessage());
+        }
+
+        $decoded = $this->decode($response, 'POST', $path);
+
+        $transcript = $decoded['simulated_conversation'] ?? [];
+        $analysis = $decoded['analysis'] ?? [];
+
+        return [
+            // @phpstan-ignore-next-line return.type
+            'simulated_conversation' => is_array($transcript) ? array_values($transcript) : [],
+            'analysis' => is_array($analysis) ? $analysis : [],
+        ];
+    }
+
+    // -----------------------------------------------------------------------
     // Phone numbers
     // -----------------------------------------------------------------------
 

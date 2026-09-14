@@ -145,6 +145,37 @@ interface ElevenLabsClient
     public function listWebhooks(): array;
 
     // -----------------------------------------------------------------------
+    // Simulation
+    // -----------------------------------------------------------------------
+
+    /**
+     * POST /v1/convai/agents/{agent_id}/simulate-conversation.
+     *
+     * The whole conversation, run server-side: ElevenLabs puts a language model
+     * in the caller's chair, lets the real agent talk to it, and calls the real
+     * tool URLs while it does. No audio, no websocket, no turn-taking — this
+     * application is not in the loop at all except as the thing the tools point
+     * at. It is the only honest way to grade an agent from a test suite, and
+     * the reason `kitchenline:eval --mode=live` exists.
+     *
+     * Slow, and metered. A single scenario is a full multi-turn conversation
+     * with an LLM on each side; treat it as something a person runs before a
+     * release, not something CI runs on every push.
+     *
+     * @param  array<string, mixed>  $simulationSpecification  `simulated_user_config`, and optionally
+     *                                                         `tool_mock_config` and `dynamic_variables`.
+     * @param  list<array<string, mixed>>  $evaluationCriteria  `PromptEvaluationCriteria` objects: id, name
+     *                                                          and conversation_goal_prompt are required.
+     * @return array{simulated_conversation: list<array<string, mixed>>, analysis: array<string, mixed>}
+     */
+    public function simulateConversation(
+        string $agentId,
+        array $simulationSpecification,
+        array $evaluationCriteria = [],
+        ?int $turnLimit = null,
+    ): array;
+
+    // -----------------------------------------------------------------------
     // Phone numbers
     // -----------------------------------------------------------------------
 

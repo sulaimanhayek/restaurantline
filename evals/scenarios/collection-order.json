@@ -1,0 +1,122 @@
+{
+    "title": "A collection order, paid in cash",
+    "description": [
+        "The ordinary case, and the one that has to keep working. Somebody rings,",
+        "names two things, gives a name and a number, hears the order back and says",
+        "yes. Nothing about it is a corner case, which is exactly why it is first:",
+        "if this one breaks, every other scenario in here is breaking for the same",
+        "reason and the others are just louder about it."
+    ],
+    "tags": ["smoke", "collection", "happy-path"],
+    "caller": [
+        "You want a half chicken, medium spice, with the spicy rice instead of chips,",
+        "and a portion of halloumi fries. You are collecting, not having it delivered.",
+        "Your name is Dan Whitfield and your number is 07700 900411.",
+        "You are paying cash at the counter."
+    ],
+    "calls": [
+        {
+            "tool": "search_menu",
+            "params": { "query": "half chicken" },
+            "expect": { "ok": true }
+        },
+        {
+            "tool": "check_availability",
+            "params": { "fulfilment": "collection" },
+            "expect": { "ok": true }
+        },
+        {
+            "tool": "quote_order",
+            "note": "The read-back. The agent says this total out loud before anything is written down.",
+            "params": {
+                "fulfilment": "collection",
+                "items": [
+                    {
+                        "item": "flame-grilled-chicken",
+                        "quantity": 1,
+                        "modifiers": [
+                            { "modifier": "half-chicken" },
+                            { "modifier": "medium" },
+                            { "modifier": "spicy-rice" }
+                        ]
+                    },
+                    { "item": "halloumi-fries", "quantity": 1 }
+                ]
+            },
+            "expect": { "ok": true }
+        },
+        {
+            "tool": "create_order",
+            "params": {
+                "fulfilment": "collection",
+                "customer": { "phone_number": "07700900411", "name": "Dan Whitfield" },
+                "items": [
+                    {
+                        "item": "flame-grilled-chicken",
+                        "quantity": 1,
+                        "modifiers": [
+                            { "modifier": "half-chicken" },
+                            { "modifier": "medium" },
+                            { "modifier": "spicy-rice" }
+                        ]
+                    },
+                    { "item": "halloumi-fries", "quantity": 1 }
+                ]
+            },
+            "expect": { "ok": true }
+        },
+        {
+            "tool": "confirm_order",
+            "params": { "order": "{{order_number}}", "payment_method": "cash" },
+            "expect": { "ok": true, "say_contains": "confirmed" }
+        }
+    ],
+    "expect": {
+        "tools_called": ["search_menu", "check_availability", "quote_order", "create_order", "confirm_order"],
+        "tools_not_called": ["validate_address", "escalate_to_human"],
+        "order": {
+            "status": "confirmed",
+            "fulfilment": "collection",
+            "payment_method": "cash",
+            "payment_status": "cash_on_collection",
+            "confirmed": true,
+            "subtotal": 16.50,
+            "delivery_fee": 0,
+            "total": 16.50,
+            "items": [
+                {
+                    "slug": "flame-grilled-chicken",
+                    "quantity": 1,
+                    "line_total": 11.00,
+                    "modifiers": ["Half Chicken", "Medium", "Spicy Rice"]
+                },
+                { "slug": "halloumi-fries", "quantity": 1, "line_total": 5.50 }
+            ]
+        },
+        "escalated": false
+    },
+    "criteria": [
+        {
+            "name": "Read the order back before creating it",
+            "goal": [
+                "Before the agent said the order was placed or gave out an order number, it read the",
+                "whole order back to the caller — every dish and the total — and the caller agreed.",
+                "Mark this a failure if an order number was given out before any read-back."
+            ]
+        },
+        {
+            "name": "Never asked for card details",
+            "goal": [
+                "The agent did not ask for a card number, expiry date, security code, or any other",
+                "card detail at any point. Offering a payment link by text, or taking cash, is correct."
+            ]
+        },
+        {
+            "name": "Got the order right",
+            "goal": [
+                "The order the agent read back was a half chicken at medium spice with spicy rice",
+                "instead of chips, and one portion of halloumi fries, for collection."
+            ]
+        }
+    ]
+}

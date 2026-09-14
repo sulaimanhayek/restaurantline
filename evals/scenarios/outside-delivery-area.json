@@ -1,0 +1,63 @@
+{
+    "title": "An address too far to deliver to",
+    "description": [
+        "A real address, found first time, and out of range. The agent is meant to",
+        "hear the difference between this and 'I could not find that' — one is a",
+        "reason to offer collection, the other is a reason to ask for a postcode —",
+        "which is why they are separate error codes rather than one 'bad address'.",
+        "",
+        "The token is still issued. A caller told they are out of range sometimes",
+        "says they will collect, and making them repeat the address to get there",
+        "would be a poor way to treat the one customer who took the news well."
+    ],
+    "tags": ["delivery", "address", "failure-path"],
+    "caller": [
+        "You want two double beef burgers delivered to 14 High Street, Croydon, CR0 1QG.",
+        "Your name is Ellis Nakamura and your number is 07700 900864.",
+        "If you are told that is too far to deliver, you are not interested in collecting —",
+        "it is an hour away. Thank them and end the call."
+    ],
+    "calls": [
+        {
+            "tool": "validate_address",
+            "params": { "spoken": "14 High Street, Croydon, CR0 1QG" },
+            "expect": {
+                "ok": false,
+                "error": "outside_delivery_area",
+                "say_contains": "outside the area we deliver to"
+            }
+        },
+        {
+            "tool": "create_order",
+            "note": "If the agent tries anyway, the order endpoint has to refuse it too.",
+            "params": {
+                "fulfilment": "delivery",
+                "address_token": "{{address_token}}",
+                "address_confirmed": true,
+                "customer": { "phone_number": "07700900864", "name": "Ellis Nakamura" },
+                "items": [{ "item": "double-beef-burger", "quantity": 2 }]
+            },
+            "expect": { "ok": false, "error": "outside_delivery_area" }
+        }
+    ],
+    "expect": {
+        "tools_called": ["validate_address", "create_order"],
+        "no_order": true
+    },
+    "criteria": [
+        {
+            "name": "Offered collection instead",
+            "goal": [
+                "On learning the address was out of range, the agent told the caller plainly that it",
+                "was too far to deliver and offered collection as the alternative, rather than asking",
+                "them to repeat the address or trying the order anyway."
+            ]
+        },
+        {
+            "name": "Did not promise a delivery it cannot make",
+            "goal": [
+                "The agent never told the caller their order would be delivered to that address."
+            ]
+        }
+    ]
+}

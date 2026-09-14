@@ -162,6 +162,13 @@ return [
         'timeout' => (int) env('ELEVENLABS_TIMEOUT', 30),
 
         /*
+         * A live eval is a whole conversation in one HTTP request — two models
+         * taking turns, with a round trip to this application on every tool
+         * call — so it gets its own budget rather than the one above.
+         */
+        'simulation_timeout' => (int) env('ELEVENLABS_SIMULATION_TIMEOUT', 300),
+
+        /*
          * Where call recordings are written.
          *
          * Local by default so `docker compose up` works with no cloud account.
@@ -269,7 +276,37 @@ return [
     'evals' => [
         // fake | live
         'mode' => env('EVAL_MODE', 'fake'),
+
+        /*
+         * The model that plays the caller in live mode. ElevenLabs runs it, so
+         * this has to be a model their simulation endpoint accepts; it is not
+         * the model the agent itself uses, which is set in AgentDefinition.
+         */
         'caller_model' => env('EVAL_CALLER_MODEL', 'claude-sonnet-5'),
+
+        /*
+         * How many turns a simulated caller gets before the harness calls it a
+         * day. A conversation that has not reached an order in twenty turns has
+         * gone wrong in a way worth failing over, and the alternative is paying
+         * for an agent and a caller to talk past each other indefinitely.
+         */
+        'turn_limit' => (int) env('EVAL_TURN_LIMIT', 20),
+
+        /*
+         * Where the scenarios live. A relative path is resolved against the
+         * project root rather than against the working directory, so
+         * `EVAL_SCENARIOS_PATH=evals/acme` means the same thing from a cron
+         * entry, a deploy script and a shell sitting in app/.
+         */
+        'scenarios_path' => (static function (): string {
+            $path = trim((string) env('EVAL_SCENARIOS_PATH', ''));
+
+            return match (true) {
+                $path === '' => base_path('evals/scenarios'),
+                str_starts_with($path, DIRECTORY_SEPARATOR) => $path,
+                default => base_path($path),
+            };
+        })(),
     ],
 
 ];

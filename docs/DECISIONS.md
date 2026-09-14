@@ -1534,3 +1534,113 @@ is a README note for phase 10 rather than a guess made here.
 
 **Reversal cost:** low. All three are a few lines, each with tests naming the
 deployment mistake it prevents.
+
+
+## 0043 — The eval harness: one scenario file, two very different graders
+
+**Date:** 2026-09-14
+**Status:** accepted
+
+Phase 9 is the answer to "how do I know it still works after I change the
+menu/the prompt/the pricing?" The honest answer has two halves, because there
+are two things that can break and only one of them is in this repository.
+
+### Fake mode replays tool calls; live mode replays a conversation
+
+A scenario's `calls` array is a list of tool invocations with their parameters
+and what each response should contain. `ReplayRunner` sends them at this
+application in order — through the real routes, the real bearer-token
+middleware, the real `FormRequest` rules, the real menu matcher, the real
+pricing service and the real order state machine — and then grades the rows
+that ended up in the database. It needs no account, costs nothing, is
+deterministic, and is what CI runs. **What it cannot tell you is whether the
+agent would have decided to make those calls.** That is not a gap to be closed
+later; it is the boundary of what a test without a model can know, and pretending
+otherwise would be the most expensive kind of green bar.
+
+`SimulationRunner` covers the other half by handing the whole thing to
+ElevenLabs: a caller model reads the scenario's `caller` prose and talks to your
+provisioned agent, the agent calls this application for real, and a judge model
+grades the transcript against the scenario's `criteria`. It is the only way to
+test the four constraints this project is built around — the order is read back
+before it is committed, a human is offered, the address is confirmed aloud, a
+card number is refused — because all four are things an agent *says*, and none
+of them leave a distinguishing row behind. It costs money per scenario and needs
+`ELEVENLABS_DRIVER=api`, a provisioned agent and a reachable `APP_URL`.
+
+Both modes share `OutcomeGrader`, so the database half of a scenario is graded
+identically either way and a scenario's `expect` block means one thing.
+
+**One file, not two.** A scenario carries `calls` (for the replay), `caller` and
+`criteria` (for the simulation), and a single `expect` block that both use. The
+alternative is two files that drift, and the drift is silent: the fake file goes
+green in CI for a year while the live file still describes a menu nobody sells.
+A test asserts that every shipped scenario still has all of it, because fake
+mode is what runs by default and a scenario that quietly lost its live-mode
+fields would look fine.
+
+**`unknown` from the judge counts as a failure.** The judge returns
+`success`, `failure` or `unknown`, and `unknown` mostly means the criterion was
+not clearly met. On a criterion like "refused to take a card number" that is not
+a pass.
+
+### JSON, not YAML
+
+The menu importer already reads JSON, the tool payloads are JSON, the responses
+being asserted against are JSON, and a scenario is mostly a literal copy of a
+request body. YAML would be pleasanter to write and would introduce a second
+syntax, a dependency, and the question of whether `expect: { ok: no }` is a
+boolean. Prose that wants line breaks — `description`, `caller`, a criterion's
+`goal` — may be written as an array of strings, which is joined with newlines;
+that is the one ergonomic concession and it costs nothing.
+
+### Money in scenarios is in major units
+
+`PricedOrder::toAgentArray()` returns minor units, because that is the only sane
+thing to put on the wire. A scenario is written by a person reading a menu, so
+its `expect.order` block is in pounds: `"total": 20.59`. `OutcomeGrader` does
+the conversion, and a mismatch prints both sides formatted the same way so
+"expected 2,059.00, got 20.59" reads as the unit error it is rather than as an
+arithmetic one. The consequence is that per-call `expect` keys — which fall
+through to a raw comparison against the response body — must not assert on
+money. Scenarios assert on `error` codes and `say_contains` there instead.
+
+### Tool URLs come from `ToolDefinitions`, not from `route()`
+
+The replay builds its requests from the same class that provisioning sends to
+ElevenLabs. If a route is renamed and the tool definition is not updated, the
+eval fails — which is the point, since the agent would have been calling the old
+URL. Resolving through `route()` would have quietly followed the rename and
+reported a pass for an agent that could no longer order anything. Dispatch goes
+through `Illuminate\Contracts\Http\Kernel`, so nothing needs a web server
+running.
+
+### A scenario may move the clock, and must put it back
+
+"Closed at three in the morning" is a scenario about opening hours, and the only
+way to write it is to move `Carbon::setTestNow()`. `ReplayRunner` restores the
+real clock in a `finally`, and there is a test for that specifically, because a
+scenario that leaks a frozen clock poisons every scenario after it in the same
+run and the failure looks like anything but a clock.
+
+### Two small changes the harness forced, both kept
+
+`escalate` now echoes the conversation id back in its response. The model has no
+use for it. A live eval does: escalation is the one ending that leaves no order
+behind, so without it there is no way to match "the caller asked for a human" to
+a transcript. And `Bindings` matches placeholder names case-insensitively,
+because the regex already did — a scenario writing `{{ORDER_NUMBER}}` was told
+that `create_order` never produced an order number, which is both untrue and a
+long way from the actual mistake.
+
+### Calibration was done by running, not by reading
+
+All nine shipped scenarios are replayed against a freshly seeded database in
+`tests/Feature/Evals/ShippedScenariosTest.php`, as a Pest dataset, one test per
+scenario — 145 checks in total. That test also asserts that each scenario
+asserted *something*, because the failure mode of an eval harness is not a red
+bar, it is a green one over an empty `expect` block.
+
+**Reversal cost:** low for everything except the scenario file format, which is
+medium — scenarios are the artefact a forker writes most of, and changing the
+shape would invalidate theirs as well as ours.

@@ -227,6 +227,36 @@ final class FakeElevenLabsClient implements ElevenLabsClient
     }
 
     // -----------------------------------------------------------------------
+    // Simulation
+    // -----------------------------------------------------------------------
+
+    /**
+     * The one method this class refuses rather than pretends.
+     *
+     * Everywhere else, a plausible answer is better than an error: a forker
+     * without an account should still see nine tools and a system prompt. Here
+     * a plausible answer would be a lie with consequences — a made-up
+     * transcript, graded, printed as a pass. The whole value of a live eval is
+     * that a real model made real decisions, and nothing in this file can
+     * stand in for that.
+     *
+     * Fake mode is not the degraded version of this. It is a different and
+     * better-aimed test, and `kitchenline:eval` runs it by default.
+     */
+    public function simulateConversation(
+        string $agentId,
+        array $simulationSpecification,
+        array $evaluationCriteria = [],
+        ?int $turnLimit = null,
+    ): array {
+        throw new ElevenLabsException(
+            'Simulating a conversation needs a real agent and a real model, so there is nothing sensible '
+            .'to fake. Set ELEVENLABS_DRIVER=api with a key to run live evals, or run `kitchenline:eval` '
+            .'without --mode=live to replay the scenarios against this application instead.',
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // Phone numbers
     // -----------------------------------------------------------------------
 
