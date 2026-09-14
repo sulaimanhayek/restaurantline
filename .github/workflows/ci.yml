@@ -15,9 +15,12 @@
 
 name: CI
 
+# Pushes to main, and every pull request. Not pushes to other branches: a PR
+# from dev into main would otherwise run the whole matrix twice for one commit,
+# once as a push and once as a pull request, and pay for both.
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
     branches: [main, dev]
 
