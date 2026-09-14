@@ -1644,3 +1644,65 @@ bar, it is a green one over an empty `expect` block.
 **Reversal cost:** low for everything except the scenario file format, which is
 medium — scenarios are the artefact a forker writes most of, and changing the
 shape would invalidate theirs as well as ours.
+
+---
+
+## 0044 — CI is four jobs, and one of them is a stranger with a fresh clone
+
+**Decided:** unprompted, in phase 10.
+
+`.github/workflows/ci.yml` runs `quality`, `tests`, `smoke` and `assets` as four
+separate jobs rather than one long script.
+
+**Why:** "CI is red" is not a useful sentence. Four jobs make it four different
+sentences — the formatting is wrong, a test fails, a fresh clone cannot get off
+the ground, the front end does not build — and each is actionable without
+opening a log. Inside `quality`, `lint:check` and `stan` are separate steps for
+the same reason, even though `composer check` would run both: the failure
+annotation names the step, and "Pint" and "PHPStan" are different mornings.
+
+`tests` runs on PHP 8.3 and 8.4 against `postgres:17-alpine`, with
+`POSTGRES_INITDB_ARGS: --locale=C --encoding=UTF8` copied from `compose.yaml` so
+that collation-sensitive ordering is the same in both places. `phpunit.xml`
+forces every test environment variable except `DB_HOST`, `DB_USERNAME` and
+`DB_PASSWORD`, which is exactly what allows a service container to supply them
+without a second config file.
+
+**The `smoke` job is the unusual one.** It does not run the test suite. It does
+what the README's quick start tells a forker to do — `cp .env.example .env`,
+`key:generate`, `migrate --seed`, `kitchenline:provision --dry-run`,
+`kitchenline:import-menu` on both shipped example menus, then the eval
+scenarios — against nothing but the example environment file, with the two host
+names patched to the service containers. The test suite cannot catch a stale
+`.env.example`, a missing config key, a seeder that only works on a database
+that has already been seeded once, or a command whose signature changed: the
+suite has `phpunit.xml` to lean on and a forker does not. This job is the only
+thing in the repository that tests the promise made in the first section of the
+README, and it is cheap.
+
+Patching the two host names with `sed` rather than committing a `.env.ci` is
+deliberate. A second example file is a second thing to keep current, and it
+would go stale in precisely the way this job exists to detect.
+
+`assets` runs `npm ci` and `npm audit --audit-level=high`, not `--audit-level=low`.
+A build-time transitive dependency with a moderate advisory is not a reason to
+stop a takeaway's dashboard from shipping, and a CI job that cries wolf gets
+`|| true` appended to it within a month. `package-lock.json` is committed, which
+is what makes `npm ci` possible at all.
+
+### `EVAL_SCENARIOS_PATH` resolves against the project root
+
+Writing this job is what exposed it. `env('EVAL_SCENARIOS_PATH')` returns `''`,
+not the default, when the key is present and empty — which it is in
+`.env.example` for anyone who deletes the value rather than the line — so
+`config/restaurantline.php` now trims it, falls back to `evals/scenarios` when
+it is empty, and resolves anything relative with `base_path()`. The last part
+means `EVAL_SCENARIOS_PATH=evals/acme` is the same directory whether it is read
+from a cron entry, a deploy script or a shell sitting in `app/`.
+
+The `.env.example` evals block was rewritten in the same pass. It had described
+replaying "recorded fixtures from `evals/fixtures`", a directory that has never
+existed, and listed an `ANTHROPIC_API_KEY` that nothing reads — the caller model
+in a live eval is ElevenLabs', configured on their side.
+
+**Reversal cost:** low. It is one file and it ships no runtime behaviour.

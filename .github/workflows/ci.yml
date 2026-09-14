@@ -1,0 +1,210 @@
+# What has to be true before a change lands.
+#
+# Four jobs rather than one, because "CI is red" is not a useful sentence. Each
+# of these answers a different question, and the job name is the answer:
+#
+#   quality  — is it formatted, and does the static analyser still agree?
+#   tests    — does the suite pass, on both PHP versions this repo supports?
+#   smoke    — does a fresh clone still get you to a working restaurant?
+#   assets   — does the front end build, from the lockfile, with no advisories?
+#
+# `smoke` is the one that is unusual and the one that matters most for a
+# boilerplate. The promise of this repository is that somebody can clone it and
+# have a restaurant taking orders inside a day; the only way to keep that
+# promise honest is to have a machine do exactly that on every push.
+
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+# A second push to the same branch cancels the first. Nobody reads the results
+# of a run whose commit has already been replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The same fixed key phpunit.xml uses. It is not a secret: it encrypts nothing
+  # that outlives a job, and setting it here means every step can boot the
+  # application without a .env.
+  APP_KEY: base64:cmVzdGF1cmFudGxpbmUtdGVzdGluZy1rZXktMzJieXQ=
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_pgsql, pgsql, intl, bcmath, zip, redis
+          coverage: none
+
+      - uses: ramsey/composer-install@v3
+
+      # Two steps, not one, so the annotation names which of them failed.
+      - name: Pint
+        run: composer lint:check
+
+      - name: PHPStan
+        run: composer stan
+
+  tests:
+    name: tests (php ${{ matrix.php }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4']
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: restaurantline
+          POSTGRES_USER: restaurantline
+          POSTGRES_PASSWORD: secret
+          # Deterministic collation, matching compose.yaml, so fuzzy menu
+          # matching sorts the same here as on a contributor's laptop.
+          POSTGRES_INITDB_ARGS: --locale=C --encoding=UTF8
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U restaurantline"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_USERNAME: restaurantline
+      DB_PASSWORD: secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo_pgsql, pgsql, intl, bcmath, zip, redis
+          coverage: none
+
+      - uses: ramsey/composer-install@v3
+
+      # The suite runs against its own database — phpunit.xml forces
+      # DB_DATABASE, so RefreshDatabase can never reach a development one. In
+      # compose this is created by docker/postgres/init; here, by hand.
+      - name: Create the test database
+        run: PGPASSWORD=secret createdb -h 127.0.0.1 -U restaurantline restaurantline_testing
+
+      # PostgreSQL, not SQLite, on purpose: the menu matcher uses pg_trgm and
+      # jsonb containment, and a SQLite suite would go green while the real
+      # query was broken.
+      - name: Pest
+        run: composer test
+
+  smoke:
+    name: smoke (a fresh clone)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: restaurantline
+          POSTGRES_USER: restaurantline
+          POSTGRES_PASSWORD: secret
+          POSTGRES_INITDB_ARGS: --locale=C --encoding=UTF8
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U restaurantline"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_pgsql, pgsql, intl, bcmath, zip, redis
+          coverage: none
+
+      - uses: ramsey/composer-install@v3
+
+      # Deliberately `.env.example` rather than a CI-shaped file. If the example
+      # drifts out of date — a renamed key, a driver that no longer exists —
+      # this is where it is caught, which is the same place a new forker would
+      # have hit it.
+      - name: Set up .env the way a forker would
+        run: |
+          cp .env.example .env
+          sed -i 's/^DB_HOST=.*/DB_HOST=127.0.0.1/' .env
+          sed -i 's/^REDIS_HOST=.*/REDIS_HOST=127.0.0.1/' .env
+          php artisan key:generate
+
+      - name: Migrate and seed
+        run: php artisan migrate --seed --no-interaction
+
+      # Everything below runs against the fake ElevenLabs driver, which is the
+      # default and needs no account. That is the point: the first hour with
+      # this repo has to work before anybody has signed up for anything.
+      - name: Provision, without sending anything
+        run: php artisan kitchenline:provision --dry-run --no-interaction
+
+      - name: Import the example menus
+        run: |
+          php artisan kitchenline:import-menu database/menus/example.json --dry-run --no-interaction
+          php artisan kitchenline:import-menu database/menus/example.csv --dry-run --no-interaction
+
+      # The eval scenarios, replayed against the routes. The suite already runs
+      # these inside Pest; running the command as well checks the command —
+      # its option parsing, its output and its exit code — outside the test
+      # environment, where APP_ENV is local and nothing is forced.
+      - name: Run the eval scenarios
+        run: composer evals
+
+  assets:
+    name: assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `npm ci` rather than `npm install`, so this builds what the lockfile
+      # says and fails loudly if package.json and package-lock.json disagree.
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # The kitchen display works without a build — see DECISIONS #0036 — so a
+      # vulnerable dependency here is not an outage. It is still worth knowing
+      # about, and `high` is the level at which it is worth blocking a merge.
+      - name: Audit
+        run: npm audit --audit-level=high
