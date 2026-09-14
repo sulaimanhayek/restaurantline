@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Http\Middleware\AuthenticateAgent;
 use App\Models\Restaurant;
 use App\Services\ElevenLabs\ElevenLabsClient;
 use App\Services\ElevenLabs\ElevenLabsException;
@@ -52,6 +53,7 @@ final class ProvisionCommand extends Command
         $this->newLine();
 
         $this->warnAboutUnreachableUrls();
+        $this->warnAboutTheExampleToken();
 
         if ($this->option('dry-run')) {
             $this->dryRun($provisioner, $restaurant);
@@ -136,6 +138,28 @@ final class ProvisionCommand extends Command
 
             return;
         }
+    }
+
+    /**
+     * The token in `.env.example`, still in place at the moment it matters.
+     *
+     * Provisioning is when a developer stops reading the repo and starts
+     * pointing a telephone line at it, so it is the last useful moment to say
+     * that the shared secret between ElevenLabs and this application is one
+     * anybody can read on GitHub. AuthenticateAgent refuses it in production;
+     * this is the warning that arrives before the deploy rather than after.
+     */
+    private function warnAboutTheExampleToken(): void
+    {
+        if ((string) config('restaurantline.agent.token', '') !== AuthenticateAgent::PLACEHOLDER_TOKEN) {
+            return;
+        }
+
+        $this->components->warn(
+            'AGENT_API_TOKEN is still the example value from .env.example, which is published in this '
+            .'repository. Anyone can read it and create orders. Fine on a laptop; refused outright in '
+            .'production. Generate one with: php -r "echo bin2hex(random_bytes(32));"',
+        );
     }
 
     private function dryRun(Provisioner $provisioner, Restaurant $restaurant): void

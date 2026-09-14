@@ -1478,3 +1478,59 @@ second time.
 **Reversal cost:** low throughout. The one choice that would be awkward to undo
 is prices-in-major-units, which is baked into two commands, a fixture pair and a
 page of tests — and is the one nobody should want to undo.
+
+## 0042 — Three things a security pass changed, and why they were the three
+
+A read through the auth middleware, the webhook verifiers, the routes and the
+query layer found the deliberate parts holding up: fail-closed secrets,
+`hash_equals` everywhere a secret is compared, HMAC over the raw body with a
+timestamp tolerance, a bare 401 with the reason logged rather than returned, no
+endpoint that accepts a card number, no raw SQL that interpolates input, no
+unescaped Blade, nothing passing `$request->all()` into a model. What it did
+find was three ways a **correct** application becomes an insecure deployment,
+which is a different category and the one that matters for a repo whose whole
+premise is that somebody else deploys it.
+
+**The example token is refused in production.** `.env.example` ships
+`AGENT_API_TOKEN=local-development-agent-token-change-me` so a fresh clone
+works. That string is published in this repository. An empty token at least
+looks unfinished, and `AuthenticateAgent` already denied on one; a long string
+with words in it looks configured, and `cp .env.example .env` followed by a
+deploy is the likeliest single path to an open order-creation endpoint on the
+public internet. So that exact value is now a denial rather than a credential
+whenever `APP_ENV=production`, and `kitchenline:provision` warns about it at
+the moment a developer is about to point a telephone line at the thing.
+
+The guard is a constant on the middleware rather than in config, because it is
+not configuration — nobody should be able to switch it off from `.env`, which
+is precisely the file that got them here.
+
+**The backing services are published on loopback.** `5432:5432` in a compose
+file means "reachable from every network this laptop is on", and this stack's
+PostgreSQL password is `secret` and its Redis has no password at all — a
+combination that is a remote-code-execution vector on a shared network, not
+merely an exposed database. PostgreSQL, Redis and Mailpit are now bound to
+`${DOCKER_BIND_ADDRESS:-127.0.0.1}`; `app` and `reverb` stay as they were,
+since they are the surface that is supposed to exist and an ngrok tunnel reaches
+them through the host either way.
+
+**The log SMS driver stops printing the message in production.** It is the
+default driver, so it is what an install reaches production with if nobody sets
+`SMS_DRIVER` — and it logs the customer's phone number next to their payment
+link, into a file most hosts ship somewhere else by default. It now warns that
+no text was sent and writes neither. It still reports success: the order is
+already placed by the time it runs, and failing there would undo a real order
+over a misconfiguration the warning names exactly. On a laptop it prints the
+message in full, which is the entire reason it is the default.
+
+**Not changed, and why.** `$guarded = []` on the models stays: nothing in the
+application passes request input into a model unfiltered, every agent endpoint
+goes through a `FormRequest` with an explicit rule per field, and a `$fillable`
+list on eighteen models is a maintenance cost paid against a hazard that does
+not exist here. `TrustProxies` is still unconfigured, which is correct for a
+repo that does not know what it will be deployed behind — but it means
+`$request->ip()` and HTTPS detection are wrong behind a load balancer, and that
+is a README note for phase 10 rather than a guess made here.
+
+**Reversal cost:** low. All three are a few lines, each with tests naming the
+deployment mistake it prevents.

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Middleware\AuthenticateAgent;
 use App\Services\ElevenLabs\ElevenLabsClient;
 use App\Services\ElevenLabs\FakeElevenLabsClient;
 use Illuminate\Support\Facades\Artisan;
@@ -304,4 +305,30 @@ describe('when it cannot proceed', function (): void {
             ->and($output)->toContain('safe to run again')
             ->and(provisioningWorkspace()->tools())->toBe([]);
     });
+});
+
+/**
+ * The warning that arrives before the deploy rather than after.
+ *
+ * Provisioning is the moment a developer stops reading and starts pointing a
+ * telephone line at this application, so it is the last useful place to say
+ * that the shared secret is one anybody can read on GitHub.
+ */
+it('says so when AGENT_API_TOKEN is still the value published in .env.example', function (): void {
+    restaurant();
+    config()->set('restaurantline.agent.token', AuthenticateAgent::PLACEHOLDER_TOKEN);
+
+    [, $output] = runProvision(['--dry-run' => true]);
+
+    expect($output)->toContain('.env.example')
+        ->and($output)->toContain('refused outright in production')
+        ->and($output)->toContain('random_bytes');
+});
+
+it('says nothing about the token once it has been changed', function (): void {
+    restaurant();
+
+    [, $output] = runProvision(['--dry-run' => true]);
+
+    expect($output)->not->toContain('.env.example');
 });
