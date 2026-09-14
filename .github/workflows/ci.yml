@@ -172,10 +172,16 @@ jobs:
       - name: Provision, without sending anything
         run: php artisan kitchenline:provision --dry-run --no-interaction
 
+      # Both shipped examples, first as a dry run and then for real, because a
+      # dry run resolves every reference but writes nothing and the write path
+      # is where the interesting failures are. Each has to work on its own: a
+      # CSV can reference a modifier group but cannot define one, so
+      # `example.csv` may only name groups the seeder has already created.
       - name: Import the example menus
         run: |
           php artisan kitchenline:import-menu database/menus/example.json --dry-run --no-interaction
           php artisan kitchenline:import-menu database/menus/example.csv --dry-run --no-interaction
+          php artisan kitchenline:import-menu database/menus/example.csv --no-interaction
 
       # The eval scenarios, replayed against the routes. The suite already runs
       # these inside Pest; running the command as well checks the command —

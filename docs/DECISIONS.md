@@ -1690,6 +1690,22 @@ stop a takeaway's dashboard from shipping, and a CI job that cries wolf gets
 `|| true` appended to it within a month. `package-lock.json` is committed, which
 is what makes `npm ci` possible at all.
 
+### It found something on its first run
+
+`database/menus/example.csv` referenced the modifier groups `size` and
+`extras`, which only `example.json` defines. It had always worked on a
+developer's machine, because that machine had imported the JSON months earlier;
+on a freshly seeded database the CSV stopped with "there is no modifier group
+'size'" — which is the first command a curious forker runs against a shipped
+example file. The CSV now references only `spice-level`, which
+`SampleMenuSeeder` creates, and `tests/Feature/Menu/ShippedMenuFilesTest.php`
+imports each example onto its own freshly seeded database so the next such drift
+is a red test rather than somebody's first ten minutes.
+
+The general shape is worth naming: every test in `ImportMenuCommandTest` uses a
+fixture the test itself writes, which is correct for testing the importer and
+useless for testing the examples. A fixture cannot go stale. A shipped file can.
+
 ### `EVAL_SCENARIOS_PATH` resolves against the project root
 
 Writing this job is what exposed it. `env('EVAL_SCENARIOS_PATH')` returns `''`,
