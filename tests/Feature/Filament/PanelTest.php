@@ -9,6 +9,7 @@ use App\Filament\Resources\Customers\CustomerResource;
 use App\Filament\Resources\MenuItems\MenuItemResource;
 use App\Filament\Resources\ModifierGroups\ModifierGroupResource;
 use App\Filament\Resources\Orders\OrderResource;
+use App\Filament\Resources\SmsMessages\SmsMessageResource;
 use App\Models\Conversation;
 use App\Models\Customer;
 use App\Models\MenuCategory;
@@ -16,6 +17,7 @@ use App\Models\MenuItem;
 use App\Models\ModifierGroup;
 use App\Models\Order;
 use App\Models\Restaurant;
+use App\Models\SmsMessage;
 use App\Models\User;
 use Filament\Resources\Resource;
 use Livewire\Livewire;
@@ -65,6 +67,7 @@ describe('list pages', function (): void {
         'menu items' => [MenuItemResource::class, fn (Restaurant $r) => MenuItem::factory()->count(3)->for($r)
             ->for(MenuCategory::factory()->for($r), 'category')->create()],
         'modifier groups' => [ModifierGroupResource::class, fn (Restaurant $r) => ModifierGroup::factory()->count(3)->for($r)->create()],
+        'texts' => [SmsMessageResource::class, fn (Restaurant $r) => SmsMessage::factory()->count(3)->for($r)->create()],
     ]);
 
     it('renders when there is nothing to show', function (string $resource): void {
@@ -76,6 +79,7 @@ describe('list pages', function (): void {
         CustomerResource::class,
         MenuItemResource::class,
         ModifierGroupResource::class,
+        SmsMessageResource::class,
     ]);
 });
 
@@ -111,6 +115,12 @@ describe('record pages', function (): void {
         get(ModifierGroupResource::getUrl('edit', ['record' => $group]))->assertOk();
     });
 
+    it('shows a text', function (): void {
+        $message = SmsMessage::factory()->for($this->restaurant)->create();
+
+        get(SmsMessageResource::getUrl('view', ['record' => $message]))->assertOk();
+    });
+
     it('shows a call', function (): void {
         $conversation = Conversation::factory()->for($this->restaurant)->flagged()->create();
 
@@ -136,6 +146,7 @@ it('has no create route for records that only the phone line produces', function
     OrderResource::class,
     ConversationResource::class,
     CustomerResource::class,
+    SmsMessageResource::class,
 ]);
 
 it('has no way to delete a call or an order', function (): void {
@@ -170,6 +181,7 @@ describe('tenant scoping', function (): void {
         'menu items' => [MenuItemResource::class, fn (Restaurant $r) => MenuItem::factory()->for($r)
             ->for(MenuCategory::factory()->for($r), 'category')->create()],
         'modifier groups' => [ModifierGroupResource::class, fn (Restaurant $r) => ModifierGroup::factory()->for($r)->create()],
+        'texts' => [SmsMessageResource::class, fn (Restaurant $r) => SmsMessage::factory()->for($r)->create()],
     ]);
 
     it('will not open another restaurant\'s record by id', function (): void {

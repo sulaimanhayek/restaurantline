@@ -7,6 +7,12 @@ namespace App\Providers;
 use App\Services\Geocoding\FakeGeocoder;
 use App\Services\Geocoding\Geocoder;
 use App\Services\Geocoding\GoogleGeocoder;
+use App\Services\Payments\FakePaymentLinkProvider;
+use App\Services\Payments\PaymentLinkProvider;
+use App\Services\Payments\StripePaymentLinkProvider;
+use App\Services\Sms\LogSmsSender;
+use App\Services\Sms\SmsSender;
+use App\Services\Sms\TwilioSmsSender;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -37,6 +43,36 @@ class AppServiceProvider extends ServiceProvider
                 'google' => new GoogleGeocoder,
                 default => throw new InvalidArgumentException(
                     sprintf('Unknown geocoder driver [%s]. Set GEOCODER_DRIVER to fake or google.', $driver),
+                ),
+            };
+        });
+
+        $this->app->singleton(SmsSender::class, function (): SmsSender {
+            $driver = (string) config('restaurantline.sms.driver', 'log');
+
+            return match ($driver) {
+                'log' => new LogSmsSender,
+                'twilio' => new TwilioSmsSender,
+                default => throw new InvalidArgumentException(
+                    sprintf('Unknown SMS driver [%s]. Set SMS_DRIVER to log or twilio.', $driver),
+                ),
+            };
+        });
+
+        /*
+         * Read app/Services/Payments/README.md before changing anything here.
+         * Neither of these accepts a card number, and that is not an accident
+         * of the current implementations — it is the arrangement that keeps a
+         * restaurant running this out of PCI scope.
+         */
+        $this->app->singleton(PaymentLinkProvider::class, function (): PaymentLinkProvider {
+            $driver = (string) config('restaurantline.payments.driver', 'fake');
+
+            return match ($driver) {
+                'fake' => new FakePaymentLinkProvider,
+                'stripe' => new StripePaymentLinkProvider,
+                default => throw new InvalidArgumentException(
+                    sprintf('Unknown payment driver [%s]. Set PAYMENT_DRIVER to fake or stripe.', $driver),
                 ),
             };
         });

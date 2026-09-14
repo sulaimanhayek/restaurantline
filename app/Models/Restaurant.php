@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Casts\UtcDateTime;
+use App\Enums\PaymentMethod;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Database\Factories\RestaurantFactory;
@@ -42,6 +43,9 @@ use Illuminate\Support\Collection;
  * @property int $collection_prep_minutes
  * @property int $delivery_prep_minutes
  * @property bool $is_accepting_orders
+ * @property bool $accepts_card_link
+ * @property bool $accepts_cash
+ * @property int $payment_link_ttl_minutes
  * @property string|null $agent_tone_of_voice
  * @property string|null $agent_greeting
  * @property string|null $elevenlabs_agent_id
@@ -84,6 +88,9 @@ class Restaurant extends Model
             'collection_prep_minutes' => 'integer',
             'delivery_prep_minutes' => 'integer',
             'is_accepting_orders' => 'boolean',
+            'accepts_card_link' => 'boolean',
+            'accepts_cash' => 'boolean',
+            'payment_link_ttl_minutes' => 'integer',
             'elevenlabs_tool_ids' => 'array',
             'provisioned_at' => UtcDateTime::class,
             'created_at' => UtcDateTime::class,
@@ -185,6 +192,69 @@ class Restaurant extends Model
     public function minimumOrderValue(): Money
     {
         return $this->money($this->minimum_order_value);
+    }
+
+    /**
+     * The ways this restaurant will take money, in the order the agent offers
+     * them.
+     *
+     * Card first, because a paid order is one less thing to go wrong at the
+     * door and the restaurant would rather have the money before the food
+     * leaves. An empty list is possible — a restaurant with both switches off —
+     * and is handled where it matters rather than defended against here: see
+     * `defaultPaymentMethod()`.
+     *
+     * @return list<PaymentMethod>
+     */
+    public function paymentMethods(): array
+    {
+        return array_values(array_filter([
+            $this->accepts_card_link ? PaymentMethod::CardLink : null,
+            $this->accepts_cash ? PaymentMethod::Cash : null,
+        ]));
+    }
+
+    /**
+     * Does the agent need to ask the caller how they want to pay?
+     *
+     * The whole reason payment method is two booleans rather than a setting.
+     * Most restaurants take both and the question is worth asking; a
+     * cash-only chip shop should never hear its agent offer a card link, and a
+     * card-only one should never be asked a question with one answer.
+     *
+     * @see docs/DECISIONS.md #0037
+     */
+    public function offersChoiceOfPaymentMethod(): bool
+    {
+        return count($this->paymentMethods()) > 1;
+    }
+
+    /**
+     * What to use when the agent did not say — because it was not asked.
+     *
+     * Falls back to cash when a restaurant has turned both off. That is a
+     * misconfiguration, but the order is real and the caller is waiting, and
+     * "somebody will take the money at the door" is the only answer that does
+     * not lose it.
+     */
+    public function defaultPaymentMethod(): PaymentMethod
+    {
+        return $this->paymentMethods()[0] ?? PaymentMethod::Cash;
+    }
+
+    /**
+     * When a payment link created right now should stop working.
+     *
+     * Null when the restaurant has set the TTL to zero, meaning a link that
+     * never expires. Offered because a very small restaurant chasing an unpaid
+     * order a week later would rather the original text still worked than have
+     * to explain how to get a new one.
+     */
+    public function paymentLinkExpiry(): ?CarbonImmutable
+    {
+        $minutes = $this->payment_link_ttl_minutes;
+
+        return $minutes > 0 ? CarbonImmutable::now()->addMinutes($minutes) : null;
     }
 
     /**

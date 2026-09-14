@@ -6,6 +6,8 @@ use App\Enums\ConversationOutcome;
 use App\Enums\OrderStatus;
 use App\Models\Conversation;
 use App\Models\Order;
+use Illuminate\Http\Response;
+use Illuminate\Testing\TestResponse;
 use Tests\Support\DemoMenu;
 
 /**
@@ -29,10 +31,30 @@ function placedOrderNumber(string $conversationId = 'call-1'): string
         ->json('order_number');
 }
 
+/**
+ * Confirm the way the agent does.
+ *
+ * The seeded restaurant takes both card and cash, so `payment_method` is a
+ * required field here — see PaymentMethodTest for the rules about when it is
+ * required, ignored or supplied by the application. Everything in this file is
+ * about confirmation itself, so it passes the cheapest valid value and moves
+ * on.
+ *
+ * @param  array<string, mixed>  $overrides
+ * @return TestResponse<Response>
+ */
+function agentConfirm(string $number, array $overrides = []): TestResponse
+{
+    return agentPost("orders/{$number}/confirm", array_replace([
+        'conversation_id' => 'call-1',
+        'payment_method' => 'cash',
+    ], $overrides));
+}
+
 it('confirms an order the caller agreed to', function (): void {
     $number = placedOrderNumber();
 
-    $response = agentPost("orders/{$number}/confirm", ['conversation_id' => 'call-1'])
+    $response = agentConfirm($number)
         ->assertOk()
         ->assertJsonPath('ok', true)
         ->assertJsonPath('status', 'confirmed')
@@ -44,7 +66,7 @@ it('confirms an order the caller agreed to', function (): void {
         ->and($order->confirmed_at)->not->toBeNull()
         ->and($response->json('confirmed_at'))->not->toBeNull()
         ->and($response->json('say'))
-        ->toMatch("/^Lovely, that's confirmed\. Your order number is .+ and it'll be ready in about 20 minutes\.$/");
+        ->toMatch("/^Lovely, that's confirmed\. Your order number is .+ and it'll be ready in about 20 minutes\. That's cash when you collect\.$/");
 });
 
 /**
@@ -55,7 +77,7 @@ it('confirms an order the caller agreed to', function (): void {
 it('reads the order number back character by character', function (): void {
     $number = placedOrderNumber();
 
-    expect(agentPost("orders/{$number}/confirm", ['conversation_id' => 'call-1'])->json('order_number_spoken'))
+    expect(agentConfirm($number)->json('order_number_spoken'))
         ->toBe(trim(implode(' ', str_split(str_replace('-', ' ', $number)))))
         ->not->toBe($number);
 });
@@ -63,7 +85,7 @@ it('reads the order number back character by character', function (): void {
 it('records the call as having produced an order', function (): void {
     $number = placedOrderNumber();
 
-    agentPost("orders/{$number}/confirm", ['conversation_id' => 'call-1']);
+    agentConfirm($number);
 
     expect(Conversation::query()->sole()->outcome)->toBe(ConversationOutcome::OrderPlaced);
 });
@@ -76,10 +98,10 @@ it('records the call as having produced an order', function (): void {
 it('treats a retried confirmation as a success, not a conflict', function (): void {
     $number = placedOrderNumber();
 
-    agentPost("orders/{$number}/confirm", ['conversation_id' => 'call-1']);
+    agentConfirm($number);
     $confirmedAt = Order::query()->sole()->confirmed_at;
 
-    agentPost("orders/{$number}/confirm", ['conversation_id' => 'call-1'])
+    agentConfirm($number)
         ->assertOk()
         ->assertJsonPath('ok', true)
         ->assertJsonPath('status', 'confirmed')
@@ -94,7 +116,7 @@ it('will not confirm an order that has moved on to the kitchen', function (): vo
     $number = placedOrderNumber();
     Order::query()->sole()->update(['status' => OrderStatus::Preparing]);
 
-    agentPost("orders/{$number}/confirm", ['conversation_id' => 'call-1'])
+    agentConfirm($number)
         ->assertOk()
         ->assertJsonPath('ok', false)
         ->assertJsonPath('error.code', 'order_not_confirmable')
@@ -106,13 +128,13 @@ it('says so plainly when the order was cancelled', function (): void {
     $number = placedOrderNumber();
     Order::query()->sole()->update(['status' => OrderStatus::Cancelled]);
 
-    agentPost("orders/{$number}/confirm", ['conversation_id' => 'call-1'])
+    agentConfirm($number)
         ->assertJsonPath('error.code', 'order_not_confirmable')
         ->assertJsonPath('error.say', "That order has already been closed off, I'm afraid.");
 });
 
 it('offers to start again when the number does not exist', function (): void {
-    agentPost('orders/NOPE-99/confirm', ['conversation_id' => 'call-1'])
+    agentConfirm('NOPE-99')
         ->assertOk()
         ->assertJsonPath('ok', false)
         ->assertJsonPath('error.code', 'order_not_found')
@@ -131,14 +153,14 @@ it('cannot confirm an order belonging to another restaurant', function (): void 
     $other = restaurant(['name' => 'Somewhere Else']);
     Order::query()->sole()->update(['restaurant_id' => $other->id]);
 
-    agentPost("orders/{$number}/confirm", ['conversation_id' => 'call-1'])
+    agentConfirm($number)
         ->assertJsonPath('error.code', 'order_not_found');
 });
 
 it('requires the conversation it belongs to', function (): void {
     $number = placedOrderNumber();
 
-    agentPost("orders/{$number}/confirm")
+    agentPost("orders/{$number}/confirm", ['payment_method' => 'cash'])
         ->assertStatus(422)
         ->assertJsonPath('error.code', 'invalid_request');
 });

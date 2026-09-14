@@ -43,6 +43,12 @@ class RestaurantFactory extends Factory
             'collection_prep_minutes' => 20,
             'delivery_prep_minutes' => 45,
             'is_accepting_orders' => true,
+            // Both on, because both on is the case that makes the agent ask —
+            // and a default that skips the question would let the asking path
+            // rot untested.
+            'accepts_card_link' => true,
+            'accepts_cash' => true,
+            'payment_link_ttl_minutes' => 60,
             'agent_tone_of_voice' => 'Warm, brisk and efficient. Never chatty — callers are hungry.',
         ];
     }
@@ -50,6 +56,24 @@ class RestaurantFactory extends Factory
     public function notAcceptingOrders(): self
     {
         return $this->state(fn (): array => ['is_accepting_orders' => false]);
+    }
+
+    /** Cash only: the agent should never mention a payment link. */
+    public function cashOnly(): self
+    {
+        return $this->state(fn (): array => [
+            'accepts_card_link' => false,
+            'accepts_cash' => true,
+        ]);
+    }
+
+    /** Card only: the agent should never offer to take cash at the door. */
+    public function cardOnly(): self
+    {
+        return $this->state(fn (): array => [
+            'accepts_card_link' => true,
+            'accepts_cash' => false,
+        ]);
     }
 
     public function provisioned(): self
