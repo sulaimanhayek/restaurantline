@@ -1224,3 +1224,501 @@ the agent tools or the dashboard's normal path can set it, because none of them
 knows whether money moved.
 
 **Reversal cost:** low. Swapping either verifier for an SDK call is one file.
+
+---
+
+## 0040 — The ElevenLabs API, re-verified against the OpenAPI spec, and what it changed
+
+Entry #0006 recorded findings taken from the documentation pages on 2026-09-06.
+Phase 8 is the first code that actually calls this API, so the surface was
+checked again on 2026-09-14 — this time against
+`https://api.elevenlabs.io/openapi.json` rather than the rendered docs, because
+the rendered pages disagree with the spec in at least one place that would have
+cost an afternoon.
+
+### The authentication header is `xi-api-key`
+
+The rendered API-reference pages for several Convai endpoints describe
+`Authorization: Bearer <key>`. That is wrong. The authentication page says
+`xi-api-key`, and the spec agrees: every operation declares a header parameter
+named `xi-api-key` and the document has no `securitySchemes` block at all.
+`ElevenLabsClient` sends `xi-api-key` and nothing else.
+
+### Tool parameter schemas are not JSON Schema
+
+This is the one worth reading twice. `path_params_schema`,
+`query_params_schema` and `request_body_schema` look like JSON Schema and are
+not. They are ElevenLabs' own `LiteralJsonSchemaProperty`,
+`ObjectJsonSchemaProperty` and `ArrayJsonSchemaProperty`, and the differences
+bite:
+
+- An object or array property carries **`property_kind`** (`"object"` /
+  `"array"`) alongside `type`.
+- An array's `items` is a **single** schema object, never a list.
+- There is no `additionalProperties`, no `$ref`, no `oneOf`/`anyOf`, and no
+  nullable union. A property is one type.
+- `enum` exists only on a literal property whose `type` is `string`.
+- `description` on a property means *the LLM supplies this value*. It is
+  **mutually exclusive** with `constant_value`, `dynamic_variable`,
+  `is_system_provided` and `is_omitted`.
+
+`ToolDefinitions` builds these through named helpers rather than array literals,
+so the shape is stated once and the nine tools cannot drift from it.
+
+### `dynamic_variable` removes `conversation_id` from the LLM's job
+
+Every tool endpoint here takes a `conversation_id`, and the obvious reading of
+the API is to describe it and let the model fill it in. It should not. A literal
+property may instead name a **dynamic variable**, and the platform substitutes
+the value at call time. Setting `dynamic_variable: "system__conversation_id"`
+means the field is always present, always correct, and never a token the model
+spends attention on — and it is the same identifier the post-call webhook
+reports, so a tool call and the transcript it came from join up without the
+model having been trusted to copy a string.
+
+The other system variables available are `system__caller_id`,
+`system__called_number`, `system__agent_id`, `system__call_duration_secs` and
+`system__call_sid` (#0006).
+
+### Post-call webhooks are a REST resource, and provisioning can create one
+
+#0006 recorded the post-call webhook as configured in the dashboard. It is now
+`POST /v1/workspace/webhooks` with
+`{ "settings": { "auth_type": "hmac", "name": …, "webhook_url": … } }`,
+answering `{ "webhook_id": …, "webhook_secret": … }`.
+
+That response is the reason this matters: **the HMAC secret comes back exactly
+once**, on creation. `kitchenline:provision` prints it as the value for
+`ELEVENLABS_WEBHOOK_SECRET` and says plainly that it will not be shown again. It
+is not written to `.env` automatically — a command that edits a developer's
+environment file is a command that eventually eats one.
+
+Attaching it is a second call. A workspace-wide default is
+`PATCH /v1/convai/settings` with `webhooks.post_call_webhook_id`; per agent it
+is the same `ConvAIWebhooks` object at
+`platform_settings.workspace_overrides.webhooks`. **We use the per-agent form**,
+because the schema here has been multi-tenant-shaped since #0005 and a
+workspace-level setting is the one piece of this wiring that a second restaurant
+could not have its own of. The events requested are `transcript`,
+`audio` and `call_initiation_failure` — the three the webhook job already
+handles.
+
+### Phone numbers can be imported over the API after all
+
+#0006 said Twilio attachment was documented only as a dashboard flow and that
+provisioning would print it as a manual step. That is no longer true:
+`POST /v1/convai/phone-numbers` takes `{phone_number, label, sid, token,
+provider: "twilio", agent_id}` and answers `{ "phone_number_id": … }`, assigning
+the agent in the same call.
+
+The command still does not do it by default. Importing a number hands a
+third-party platform live Twilio credentials and changes who answers a phone
+that customers are calling, which is not something a provisioning command should
+do because it was run with no arguments. It happens only behind
+`--phone-number=` and only after a confirmation naming the number — and the
+Twilio credentials come from the environment, never from the command line, where
+they would land in a shell history.
+
+### The bearer token is stored as a workspace secret, not pasted into nine tools
+
+`POST /v1/convai/secrets` takes `{type: "new", name, value}` and answers
+`{type: "stored", secret_id, name}`. A tool's `request_headers` accepts either a
+literal string or a `ConvAISecretLocator`, which is just `{"secret_id": …}`.
+
+So `AGENT_API_TOKEN` is uploaded once and referenced nine times. The alternative
+— #0006's "writes the token into each tool definition" — puts the same secret in
+plaintext in nine places, and rotating it means remembering all nine.
+
+### Smaller things that constrain the definitions
+
+- A tool name must match `^[a-zA-Z0-9_-]{1,64}$`. No spaces, no dots. The nine
+  are named after their routes: `search_menu`, `show_menu`, `check_availability`,
+  `opening_hours`, `validate_address`, `quote_order`, `create_order`,
+  `confirm_order`, `escalate_to_human`.
+- `response_timeout_secs` is an integer from **5 to 300**, default 20. Ours stay
+  at the default; a caller will not wait twenty seconds either, but the number
+  that matters for a voice call is how fast the endpoint is, not how long the
+  platform is willing to wait.
+- Agent creation is `POST /v1/convai/agents/create` (not a plain POST to the
+  collection) answering `{agent_id}`; updates are `PATCH /v1/convai/agents/{id}`
+  and are a genuine partial patch.
+- Tools are `POST /v1/convai/tools` and `PATCH /v1/convai/tools/{tool_id}`, both
+  wrapping the config in `{"tool_config": …}` and both answering `{id, …}`.
+- `llm` accepts 98 values; `gpt-4o-mini` — this repo's default — is one of them.
+
+### Still not verified
+
+The signature *wire format* for post-call webhooks. The docs continue to
+delegate verification to their SDKs and do not state it on the page, and it is
+not in the OpenAPI spec either, since it describes requests **to** ElevenLabs
+rather than **from** it. The `t=…,v0=…` format in #0006 remains corroborated but
+unconfirmed against a live signed request. Provisioning does not change this;
+re-check it the first time a real webhook arrives.
+
+**Reversal cost:** low for everything except the per-agent webhook choice, which
+is a different field on a different endpoint but the same two lines.
+
+## 0041 — Provisioning and menu import: what the two commands promise
+
+**Date:** 2026-09-14
+**Status:** accepted
+
+Phase 8 is two Artisan commands, and both of them are things a person runs
+repeatedly while a restaurant changes its mind. Everything below follows from
+that one fact.
+
+### `kitchenline:provision` is idempotent, and that is the whole feature
+
+A forker runs it after every change to the tool routes, after every edit to the
+tone of voice, and once by accident. None of those may leave a workspace holding
+eighteen tools, two agents and two webhooks posting every call twice. So every
+id it creates is remembered on the `restaurants` row, and every remembered id is
+read back before it is reused — a tool deleted in somebody's dashboard is
+treated as absent rather than as a fatal 404. The webhook is matched on its
+**URL** rather than on the remembered id, because two webhooks pointing at the
+same endpoint are the same webhook whoever made them, and the failure worth
+preventing is a duplicate conversation record for every call.
+
+The one thing it will not do twice is attach a phone number. That step changes
+who answers when a customer rings, so it lives behind `--phone-number=` and a
+confirmation naming the number.
+
+### The secret holds `Bearer <token>`, not the token
+
+A `ConvAISecretLocator` substitutes the **whole** header value; there is no
+interpolation, so `Authorization: Bearer {{secret}}` is not expressible. The
+stored value is therefore the complete header. It is rewritten on every run,
+because a secret store cannot be read back to compare — which is also what makes
+rotation a one-liner: change `AGENT_API_TOKEN`, provision again, and the nine
+tools never move.
+
+### The fake ElevenLabs client ships, and keeps its workspace in the cache
+
+`ELEVENLABS_DRIVER=fake` is the default, and the fake lives in `app/` rather
+than `tests/` because the first hour with this repo is `docker compose up` and
+`kitchenline:provision`, and that hour should end with a developer reading the
+nine tool definitions and the system prompt this application would have sent.
+Signing up is the second hour.
+
+Its workspace is held in the cache rather than in the object, because a
+provisioning run is a whole process: a fake that forgot everything between two
+`artisan` invocations could not demonstrate the only behaviour worth
+demonstrating, which is that the second run creates nothing. In the suite
+`CACHE_STORE=array`, so each test gets an empty workspace with no cleanup to
+remember. `php artisan cache:clear` is how you throw one away.
+
+### `restaurants.twilio_phone_number_sid` is gone
+
+#0006 assumed Twilio would be wired up by hand in a dashboard. It is not — see
+#0040 — and the id that matters is ElevenLabs' `phone_number_id`. The migration
+drops the old column and adds `elevenlabs_secret_id`, `elevenlabs_webhook_id`
+and `elevenlabs_phone_number_id` beside it. Nothing had ever written to the old
+one.
+
+### Menu prices are always in major units. Always
+
+`6.50` is six pounds fifty, and so is `"£6.50"`, and `6` is six pounds. Never
+pence, in any format, with no exceptions and no per-file switch. One rule that
+is occasionally surprising beats a clever one that is occasionally wrong by a
+factor of a hundred, and `--dry-run` prints every price formatted so a misread
+costs a glance rather than an evening.
+
+### CSV can reference modifier groups but cannot define them
+
+A group is a set with selection rules and its own prices, and every way of
+flattening that into a spreadsheet row is worse than writing the JSON. So a CSV
+row may name groups by slug in a pipe-separated `modifier_groups` cell, and the
+groups themselves come from JSON or from the dashboard. The common path — import
+the dishes from the spreadsheet the owner emailed, add the sizes afterwards —
+works without a second import format nobody would enjoy.
+
+### A key the file does not mention means "leave it alone", never "set it to null"
+
+This is what makes a CSV of new prices safe to import over a menu whose extras
+were configured in the dashboard. The mirror case is deliberate: an **empty**
+`modifier_groups` array does detach every group, because that is somebody saying
+something rather than saying nothing.
+
+### `--prune` deactivates; it never deletes
+
+Anything the file does not mention has `is_available` or `is_active` turned off.
+Deleting would take order history with it — items are referenced by
+`order_items` — and "we do not do that any more" is what a restaurant means, not
+"that never existed".
+
+### The import is one transaction, and `--dry-run` is a rollback
+
+A menu half-applied because row two hundred had a typo is worse than no import
+at all: the agent would spend the evening confidently quoting a menu nobody
+meant to publish. And `--dry-run` runs the real code path inside a transaction
+it always rolls back, rather than predicting what an import would do — so
+validation, slug collisions and unique constraints are all genuinely exercised.
+Rolling a real import back is far more honest than a second code path.
+
+### Identity is the slug, scoped to the restaurant — and modifier slugs carry their group
+
+`firstOrNew(['slug' => …])` on the restaurant's own relation. Modifier slugs are
+prefixed with their group's slug, so `size-large` and `drink-size-large` can
+coexist; "Large" is an ordinary name for an option in several groups at once.
+
+### Two normalisations that idempotence turned out to depend on
+
+Both were found by running the same import twice and getting "1 updated" the
+second time.
+
+- **`available_days` is 0 = Sunday … 6 = Saturday** in this codebase, matching
+  `Carbon::dayOfWeek` and `MenuCategory::isServedAt()`. It is **not** ISO 8601,
+  which starts the week on Monday at 1. The importer enforces 0–6 and says so in
+  the error, because getting this wrong silently takes a lunch menu off on the
+  one day the restaurant is busiest.
+- Postgres `time` columns hand back `HH:MM:SS`. `"17:00"` is what a person
+  writes, so the importer normalises before comparing; without it every category
+  with opening times is dirty on every import.
+
+**Reversal cost:** low throughout. The one choice that would be awkward to undo
+is prices-in-major-units, which is baked into two commands, a fixture pair and a
+page of tests — and is the one nobody should want to undo.
+
+## 0042 — Three things a security pass changed, and why they were the three
+
+A read through the auth middleware, the webhook verifiers, the routes and the
+query layer found the deliberate parts holding up: fail-closed secrets,
+`hash_equals` everywhere a secret is compared, HMAC over the raw body with a
+timestamp tolerance, a bare 401 with the reason logged rather than returned, no
+endpoint that accepts a card number, no raw SQL that interpolates input, no
+unescaped Blade, nothing passing `$request->all()` into a model. What it did
+find was three ways a **correct** application becomes an insecure deployment,
+which is a different category and the one that matters for a repo whose whole
+premise is that somebody else deploys it.
+
+**The example token is refused in production.** `.env.example` ships
+`AGENT_API_TOKEN=local-development-agent-token-change-me` so a fresh clone
+works. That string is published in this repository. An empty token at least
+looks unfinished, and `AuthenticateAgent` already denied on one; a long string
+with words in it looks configured, and `cp .env.example .env` followed by a
+deploy is the likeliest single path to an open order-creation endpoint on the
+public internet. So that exact value is now a denial rather than a credential
+whenever `APP_ENV=production`, and `kitchenline:provision` warns about it at
+the moment a developer is about to point a telephone line at the thing.
+
+The guard is a constant on the middleware rather than in config, because it is
+not configuration — nobody should be able to switch it off from `.env`, which
+is precisely the file that got them here.
+
+**The backing services are published on loopback.** `5432:5432` in a compose
+file means "reachable from every network this laptop is on", and this stack's
+PostgreSQL password is `secret` and its Redis has no password at all — a
+combination that is a remote-code-execution vector on a shared network, not
+merely an exposed database. PostgreSQL, Redis and Mailpit are now bound to
+`${DOCKER_BIND_ADDRESS:-127.0.0.1}`; `app` and `reverb` stay as they were,
+since they are the surface that is supposed to exist and an ngrok tunnel reaches
+them through the host either way.
+
+**The log SMS driver stops printing the message in production.** It is the
+default driver, so it is what an install reaches production with if nobody sets
+`SMS_DRIVER` — and it logs the customer's phone number next to their payment
+link, into a file most hosts ship somewhere else by default. It now warns that
+no text was sent and writes neither. It still reports success: the order is
+already placed by the time it runs, and failing there would undo a real order
+over a misconfiguration the warning names exactly. On a laptop it prints the
+message in full, which is the entire reason it is the default.
+
+**Not changed, and why.** `$guarded = []` on the models stays: nothing in the
+application passes request input into a model unfiltered, every agent endpoint
+goes through a `FormRequest` with an explicit rule per field, and a `$fillable`
+list on eighteen models is a maintenance cost paid against a hazard that does
+not exist here. `TrustProxies` is still unconfigured, which is correct for a
+repo that does not know what it will be deployed behind — but it means
+`$request->ip()` and HTTPS detection are wrong behind a load balancer, and that
+is a README note for phase 10 rather than a guess made here.
+
+**Reversal cost:** low. All three are a few lines, each with tests naming the
+deployment mistake it prevents.
+
+
+## 0043 — The eval harness: one scenario file, two very different graders
+
+**Date:** 2026-09-14
+**Status:** accepted
+
+Phase 9 is the answer to "how do I know it still works after I change the
+menu/the prompt/the pricing?" The honest answer has two halves, because there
+are two things that can break and only one of them is in this repository.
+
+### Fake mode replays tool calls; live mode replays a conversation
+
+A scenario's `calls` array is a list of tool invocations with their parameters
+and what each response should contain. `ReplayRunner` sends them at this
+application in order — through the real routes, the real bearer-token
+middleware, the real `FormRequest` rules, the real menu matcher, the real
+pricing service and the real order state machine — and then grades the rows
+that ended up in the database. It needs no account, costs nothing, is
+deterministic, and is what CI runs. **What it cannot tell you is whether the
+agent would have decided to make those calls.** That is not a gap to be closed
+later; it is the boundary of what a test without a model can know, and pretending
+otherwise would be the most expensive kind of green bar.
+
+`SimulationRunner` covers the other half by handing the whole thing to
+ElevenLabs: a caller model reads the scenario's `caller` prose and talks to your
+provisioned agent, the agent calls this application for real, and a judge model
+grades the transcript against the scenario's `criteria`. It is the only way to
+test the four constraints this project is built around — the order is read back
+before it is committed, a human is offered, the address is confirmed aloud, a
+card number is refused — because all four are things an agent *says*, and none
+of them leave a distinguishing row behind. It costs money per scenario and needs
+`ELEVENLABS_DRIVER=api`, a provisioned agent and a reachable `APP_URL`.
+
+Both modes share `OutcomeGrader`, so the database half of a scenario is graded
+identically either way and a scenario's `expect` block means one thing.
+
+**One file, not two.** A scenario carries `calls` (for the replay), `caller` and
+`criteria` (for the simulation), and a single `expect` block that both use. The
+alternative is two files that drift, and the drift is silent: the fake file goes
+green in CI for a year while the live file still describes a menu nobody sells.
+A test asserts that every shipped scenario still has all of it, because fake
+mode is what runs by default and a scenario that quietly lost its live-mode
+fields would look fine.
+
+**`unknown` from the judge counts as a failure.** The judge returns
+`success`, `failure` or `unknown`, and `unknown` mostly means the criterion was
+not clearly met. On a criterion like "refused to take a card number" that is not
+a pass.
+
+### JSON, not YAML
+
+The menu importer already reads JSON, the tool payloads are JSON, the responses
+being asserted against are JSON, and a scenario is mostly a literal copy of a
+request body. YAML would be pleasanter to write and would introduce a second
+syntax, a dependency, and the question of whether `expect: { ok: no }` is a
+boolean. Prose that wants line breaks — `description`, `caller`, a criterion's
+`goal` — may be written as an array of strings, which is joined with newlines;
+that is the one ergonomic concession and it costs nothing.
+
+### Money in scenarios is in major units
+
+`PricedOrder::toAgentArray()` returns minor units, because that is the only sane
+thing to put on the wire. A scenario is written by a person reading a menu, so
+its `expect.order` block is in pounds: `"total": 20.59`. `OutcomeGrader` does
+the conversion, and a mismatch prints both sides formatted the same way so
+"expected 2,059.00, got 20.59" reads as the unit error it is rather than as an
+arithmetic one. The consequence is that per-call `expect` keys — which fall
+through to a raw comparison against the response body — must not assert on
+money. Scenarios assert on `error` codes and `say_contains` there instead.
+
+### Tool URLs come from `ToolDefinitions`, not from `route()`
+
+The replay builds its requests from the same class that provisioning sends to
+ElevenLabs. If a route is renamed and the tool definition is not updated, the
+eval fails — which is the point, since the agent would have been calling the old
+URL. Resolving through `route()` would have quietly followed the rename and
+reported a pass for an agent that could no longer order anything. Dispatch goes
+through `Illuminate\Contracts\Http\Kernel`, so nothing needs a web server
+running.
+
+### A scenario may move the clock, and must put it back
+
+"Closed at three in the morning" is a scenario about opening hours, and the only
+way to write it is to move `Carbon::setTestNow()`. `ReplayRunner` restores the
+real clock in a `finally`, and there is a test for that specifically, because a
+scenario that leaks a frozen clock poisons every scenario after it in the same
+run and the failure looks like anything but a clock.
+
+### Two small changes the harness forced, both kept
+
+`escalate` now echoes the conversation id back in its response. The model has no
+use for it. A live eval does: escalation is the one ending that leaves no order
+behind, so without it there is no way to match "the caller asked for a human" to
+a transcript. And `Bindings` matches placeholder names case-insensitively,
+because the regex already did — a scenario writing `{{ORDER_NUMBER}}` was told
+that `create_order` never produced an order number, which is both untrue and a
+long way from the actual mistake.
+
+### Calibration was done by running, not by reading
+
+All nine shipped scenarios are replayed against a freshly seeded database in
+`tests/Feature/Evals/ShippedScenariosTest.php`, as a Pest dataset, one test per
+scenario — 145 checks in total. That test also asserts that each scenario
+asserted *something*, because the failure mode of an eval harness is not a red
+bar, it is a green one over an empty `expect` block.
+
+**Reversal cost:** low for everything except the scenario file format, which is
+medium — scenarios are the artefact a forker writes most of, and changing the
+shape would invalidate theirs as well as ours.
+
+---
+
+## 0044 — CI is four jobs, and one of them is a stranger with a fresh clone
+
+**Decided:** unprompted, in phase 10.
+
+`.github/workflows/ci.yml` runs `quality`, `tests`, `smoke` and `assets` as four
+separate jobs rather than one long script.
+
+**Why:** "CI is red" is not a useful sentence. Four jobs make it four different
+sentences — the formatting is wrong, a test fails, a fresh clone cannot get off
+the ground, the front end does not build — and each is actionable without
+opening a log. Inside `quality`, `lint:check` and `stan` are separate steps for
+the same reason, even though `composer check` would run both: the failure
+annotation names the step, and "Pint" and "PHPStan" are different mornings.
+
+`tests` runs on PHP 8.3 and 8.4 against `postgres:17-alpine`, with
+`POSTGRES_INITDB_ARGS: --locale=C --encoding=UTF8` copied from `compose.yaml` so
+that collation-sensitive ordering is the same in both places. `phpunit.xml`
+forces every test environment variable except `DB_HOST`, `DB_USERNAME` and
+`DB_PASSWORD`, which is exactly what allows a service container to supply them
+without a second config file.
+
+**The `smoke` job is the unusual one.** It does not run the test suite. It does
+what the README's quick start tells a forker to do — `cp .env.example .env`,
+`key:generate`, `migrate --seed`, `kitchenline:provision --dry-run`,
+`kitchenline:import-menu` on both shipped example menus, then the eval
+scenarios — against nothing but the example environment file, with the two host
+names patched to the service containers. The test suite cannot catch a stale
+`.env.example`, a missing config key, a seeder that only works on a database
+that has already been seeded once, or a command whose signature changed: the
+suite has `phpunit.xml` to lean on and a forker does not. This job is the only
+thing in the repository that tests the promise made in the first section of the
+README, and it is cheap.
+
+Patching the two host names with `sed` rather than committing a `.env.ci` is
+deliberate. A second example file is a second thing to keep current, and it
+would go stale in precisely the way this job exists to detect.
+
+`assets` runs `npm ci` and `npm audit --audit-level=high`, not `--audit-level=low`.
+A build-time transitive dependency with a moderate advisory is not a reason to
+stop a takeaway's dashboard from shipping, and a CI job that cries wolf gets
+`|| true` appended to it within a month. `package-lock.json` is committed, which
+is what makes `npm ci` possible at all.
+
+### It found something on its first run
+
+`database/menus/example.csv` referenced the modifier groups `size` and
+`extras`, which only `example.json` defines. It had always worked on a
+developer's machine, because that machine had imported the JSON months earlier;
+on a freshly seeded database the CSV stopped with "there is no modifier group
+'size'" — which is the first command a curious forker runs against a shipped
+example file. The CSV now references only `spice-level`, which
+`SampleMenuSeeder` creates, and `tests/Feature/Menu/ShippedMenuFilesTest.php`
+imports each example onto its own freshly seeded database so the next such drift
+is a red test rather than somebody's first ten minutes.
+
+The general shape is worth naming: every test in `ImportMenuCommandTest` uses a
+fixture the test itself writes, which is correct for testing the importer and
+useless for testing the examples. A fixture cannot go stale. A shipped file can.
+
+### `EVAL_SCENARIOS_PATH` resolves against the project root
+
+Writing this job is what exposed it. `env('EVAL_SCENARIOS_PATH')` returns `''`,
+not the default, when the key is present and empty — which it is in
+`.env.example` for anyone who deletes the value rather than the line — so
+`config/restaurantline.php` now trims it, falls back to `evals/scenarios` when
+it is empty, and resolves anything relative with `base_path()`. The last part
+means `EVAL_SCENARIOS_PATH=evals/acme` is the same directory whether it is read
+from a cron entry, a deploy script or a shell sitting in `app/`.
+
+The `.env.example` evals block was rewritten in the same pass. It had described
+replaying "recorded fixtures from `evals/fixtures`", a directory that has never
+existed, and listed an `ANTHROPIC_API_KEY` that nothing reads — the caller model
+in a live eval is ElevenLabs', configured on their side.
+
+**Reversal cost:** low. It is one file and it ships no runtime behaviour.

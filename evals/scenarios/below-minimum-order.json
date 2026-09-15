@@ -1,0 +1,74 @@
+{
+    "title": "A delivery order under the minimum",
+    "description": [
+        "Eight pounds twenty against a fifteen pound minimum. The refusal is not a",
+        "dead end — it comes back with the shortfall so the agent can say how much",
+        "short they are and offer to add something, which is the difference between",
+        "a rule that loses the order and one that grows it.",
+        "",
+        "The minimum applies to delivery and not to collection, which is why this",
+        "scenario is a delivery one. A collection order of the same basket goes",
+        "through, and that asymmetry is deliberate: nobody turns away a customer",
+        "standing at the counter for spending too little."
+    ],
+    "tags": ["delivery", "pricing", "failure-path"],
+    "caller": [
+        "You want a chicken pitta and a bottle of water, delivered to 3 Hanbury Street,",
+        "E1 6QR. Your name is Toby Lawrence and your number is 07700 900377.",
+        "If you are told there is a minimum order, you are not willing to spend more —",
+        "ask whether you can collect instead."
+    ],
+    "calls": [
+        {
+            "tool": "validate_address",
+            "params": { "spoken": "3 Hanbury Street, E1 6QR" },
+            "expect": { "ok": true }
+        },
+        {
+            "tool": "quote_order",
+            "params": {
+                "fulfilment": "delivery",
+                "address_token": "{{address_token}}",
+                "items": [
+                    { "item": "chicken-pitta", "quantity": 1, "modifiers": [{ "modifier": "plain" }] },
+                    { "item": "still-water", "quantity": 1 }
+                ]
+            },
+            "expect": { "ok": false, "error": "below_minimum", "say_contains": "minimum" }
+        },
+        {
+            "tool": "create_order",
+            "params": {
+                "fulfilment": "delivery",
+                "address_token": "{{address_token}}",
+                "address_confirmed": true,
+                "customer": { "phone_number": "07700900377", "name": "Toby Lawrence" },
+                "items": [
+                    { "item": "chicken-pitta", "quantity": 1, "modifiers": [{ "modifier": "plain" }] },
+                    { "item": "still-water", "quantity": 1 }
+                ]
+            },
+            "expect": { "ok": false, "error": "below_minimum" }
+        }
+    ],
+    "expect": {
+        "tools_called": ["validate_address", "quote_order", "create_order"],
+        "no_order": true
+    },
+    "criteria": [
+        {
+            "name": "Said how much short the order was",
+            "goal": [
+                "The agent told the caller there was a minimum for delivery and said how much they",
+                "were short by, or what the minimum is, rather than only refusing."
+            ]
+        },
+        {
+            "name": "Offered a way forward",
+            "goal": [
+                "The agent offered something the caller could do about it — adding to the order, or",
+                "collecting instead — rather than ending the conversation at the refusal."
+            ]
+        }
+    ]
+}

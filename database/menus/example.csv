@@ -1,0 +1,7 @@
+category,name,description,price,prep_minutes,available,aliases,modifier_groups
+Starters,Chicken Tikka,Marinated overnight and off the grill,6.50,12,yes,tikka|chicken teeka,spice-level
+Starters,Onion Bhaji,,4.20,8,yes,bhaji|bajis,
+Mains,Chicken Korma,"Mild, creamy, almonds",11.90,20,yes,korma,spice-level
+Mains,Lamb Rogan Josh,,13.50,25,yes,rogan josh|rogan,spice-level
+Sides,Pilau Rice,,3.60,,yes,rice|pilau,
+Sides,Garlic Naan,,3.90,,yes,naan|nan bread,

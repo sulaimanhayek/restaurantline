@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Services\ElevenLabs\ApiElevenLabsClient;
+use App\Services\ElevenLabs\ElevenLabsClient;
+use App\Services\ElevenLabs\FakeElevenLabsClient;
 use App\Services\Geocoding\FakeGeocoder;
 use App\Services\Geocoding\Geocoder;
 use App\Services\Geocoding\GoogleGeocoder;
@@ -55,6 +58,24 @@ class AppServiceProvider extends ServiceProvider
                 'twilio' => new TwilioSmsSender,
                 default => throw new InvalidArgumentException(
                     sprintf('Unknown SMS driver [%s]. Set SMS_DRIVER to log or twilio.', $driver),
+                ),
+            };
+        });
+
+        /*
+         * The fake is a singleton for a reason beyond tidiness: it holds the
+         * tools and agents it was given in memory, so a provisioning run
+         * against it behaves like a second run against a real workspace —
+         * finding its own earlier work instead of creating everything twice.
+         */
+        $this->app->singleton(ElevenLabsClient::class, function (): ElevenLabsClient {
+            $driver = (string) config('restaurantline.elevenlabs.driver', 'fake');
+
+            return match ($driver) {
+                'fake' => new FakeElevenLabsClient,
+                'api' => new ApiElevenLabsClient,
+                default => throw new InvalidArgumentException(
+                    sprintf('Unknown ElevenLabs driver [%s]. Set ELEVENLABS_DRIVER to fake or api.', $driver),
                 ),
             };
         });

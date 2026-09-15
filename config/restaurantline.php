@@ -31,8 +31,9 @@ return [
     | Agent tool endpoints
     |----------------------------------------------------------------------
     |
-    | The tools under /api/agent are authenticated with a static bearer token
-    | that `kitchenline:provision` writes into each tool definition.
+    | The tools under /api/agent are authenticated with a static bearer token.
+    | `kitchenline:provision` uploads it once as an ElevenLabs workspace secret
+    | and points all nine tool definitions at it by id — see DECISIONS #0041.
     |
     */
 
@@ -139,8 +140,33 @@ return [
         'base_url' => env('ELEVENLABS_BASE_URL', 'https://api.elevenlabs.io'),
         'llm' => env('ELEVENLABS_AGENT_LLM', 'gpt-4o-mini'),
         'voice_id' => env('ELEVENLABS_VOICE_ID'),
+
+        // Flash, because on a phone call latency is the experience. Any of the
+        // eleven_* conversational models is valid here.
+        'tts_model' => env('ELEVENLABS_TTS_MODEL', 'eleven_flash_v2_5'),
+
+        // The agent's language, as an ISO 639-1 code.
+        'language' => env('ELEVENLABS_AGENT_LANGUAGE', 'en'),
+
+        // The ceiling on a single call, in seconds. Not a feature — a limit on
+        // what one stuck conversation can cost.
+        'max_call_seconds' => (int) env('ELEVENLABS_MAX_CALL_SECONDS', 600),
         'webhook_secret' => env('ELEVENLABS_WEBHOOK_SECRET'),
         'webhook_tolerance' => (int) env('ELEVENLABS_WEBHOOK_TOLERANCE', 1800),
+
+        /*
+         * Only the provisioning commands spend this. Generous, because a person
+         * is watching the output and a timeout halfway through creating nine
+         * tools is more annoying than a slow one.
+         */
+        'timeout' => (int) env('ELEVENLABS_TIMEOUT', 30),
+
+        /*
+         * A live eval is a whole conversation in one HTTP request — two models
+         * taking turns, with a round trip to this application on every tool
+         * call — so it gets its own budget rather than the one above.
+         */
+        'simulation_timeout' => (int) env('ELEVENLABS_SIMULATION_TIMEOUT', 300),
 
         /*
          * Where call recordings are written.
@@ -250,7 +276,37 @@ return [
     'evals' => [
         // fake | live
         'mode' => env('EVAL_MODE', 'fake'),
+
+        /*
+         * The model that plays the caller in live mode. ElevenLabs runs it, so
+         * this has to be a model their simulation endpoint accepts; it is not
+         * the model the agent itself uses, which is set in AgentDefinition.
+         */
         'caller_model' => env('EVAL_CALLER_MODEL', 'claude-sonnet-5'),
+
+        /*
+         * How many turns a simulated caller gets before the harness calls it a
+         * day. A conversation that has not reached an order in twenty turns has
+         * gone wrong in a way worth failing over, and the alternative is paying
+         * for an agent and a caller to talk past each other indefinitely.
+         */
+        'turn_limit' => (int) env('EVAL_TURN_LIMIT', 20),
+
+        /*
+         * Where the scenarios live. A relative path is resolved against the
+         * project root rather than against the working directory, so
+         * `EVAL_SCENARIOS_PATH=evals/acme` means the same thing from a cron
+         * entry, a deploy script and a shell sitting in app/.
+         */
+        'scenarios_path' => (static function (): string {
+            $path = trim((string) env('EVAL_SCENARIOS_PATH', ''));
+
+            return match (true) {
+                $path === '' => base_path('evals/scenarios'),
+                str_starts_with($path, DIRECTORY_SEPARATOR) => $path,
+                default => base_path($path),
+            };
+        })(),
     ],
 
 ];

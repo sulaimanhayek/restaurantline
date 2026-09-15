@@ -81,3 +81,26 @@ it('refuses a reason containing a card number', function (): void {
 
     expect(Conversation::query()->count())->toBe(0);
 });
+
+/**
+ * The conversation id comes back out, both with a transfer number and without.
+ *
+ * The model has no use for it — it never sees the dynamic variable this was
+ * filled from — but a live eval does. This is the one endpoint a call can reach
+ * without leaving an order behind, so it is the only way to identify a call
+ * that ended with "let me put you through to someone".
+ */
+it('echoes the conversation id back so a transcript can be matched to a call', function (): void {
+    $this->restaurant->update(['transfer_phone_number' => '+442071234567']);
+
+    agentPost('escalate', ['conversation_id' => 'call-1', 'reason' => 'asked for the manager'])
+        ->assertOk()
+        ->assertJsonPath('conversation', 'call-1');
+
+    $this->restaurant->update(['transfer_phone_number' => null]);
+
+    agentPost('escalate', ['conversation_id' => 'call-2', 'reason' => 'asked for the manager'])
+        ->assertOk()
+        ->assertJsonPath('transfer_available', false)
+        ->assertJsonPath('conversation', 'call-2');
+});

@@ -1,0 +1,102 @@
+{
+    "modifier_groups": [
+        {
+            "name": "Size",
+            "slug": "size",
+            "prompt": "Regular or large?",
+            "selection_type": "single",
+            "min_selections": 1,
+            "max_selections": 1,
+            "is_required": true,
+            "modifiers": [
+                { "name": "Regular", "price_delta": "0.00", "is_default": true },
+                { "name": "Large", "price_delta": "2.00", "aliases": ["big", "biggest"] }
+            ]
+        },
+        {
+            "name": "Spice level",
+            "slug": "spice-level",
+            "prompt": "How hot would you like it?",
+            "selection_type": "single",
+            "min_selections": 1,
+            "max_selections": 1,
+            "is_required": true,
+            "modifiers": [
+                { "name": "Mild", "price_delta": "0.00", "is_default": true },
+                { "name": "Medium", "price_delta": "0.00" },
+                { "name": "Hot", "price_delta": "0.00", "aliases": ["spicy", "extra hot"] }
+            ]
+        },
+        {
+            "name": "Extras",
+            "slug": "extras",
+            "prompt": "Anything on the side?",
+            "selection_type": "multi",
+            "min_selections": 0,
+            "max_selections": 4,
+            "is_required": false,
+            "modifiers": [
+                { "name": "Extra cheese", "price_delta": "1.20", "kind": "addon" },
+                { "name": "No onions", "price_delta": "0.00", "kind": "removal" }
+            ]
+        }
+    ],
+    "categories": [
+        {
+            "name": "Starters",
+            "slug": "starters",
+            "description": "Served while you wait.",
+            "sort_order": 1,
+            "items": [
+                {
+                    "name": "Chicken Tikka",
+                    "description": "Marinated overnight, off the grill.",
+                    "price": "6.50",
+                    "prep_minutes": 12,
+                    "aliases": ["tikka", "chicken teeka"],
+                    "modifier_groups": ["spice-level"]
+                },
+                {
+                    "name": "Onion Bhaji",
+                    "price": "4.20",
+                    "prep_minutes": 8,
+                    "aliases": ["bhaji", "bajis"]
+                }
+            ]
+        },
+        {
+            "name": "Mains",
+            "slug": "mains",
+            "sort_order": 2,
+            "available_from": "17:00",
+            "available_until": "23:00",
+            "available_days": [0, 1, 2, 3, 4, 5, 6],
+            "items": [
+                {
+                    "name": "Chicken Korma",
+                    "description": "Mild, creamy, almonds.",
+                    "price": "11.90",
+                    "prep_minutes": 20,
+                    "aliases": ["korma"],
+                    "modifier_groups": ["size", "spice-level", "extras"]
+                },
+                {
+                    "name": "Lamb Rogan Josh",
+                    "price": "13.50",
+                    "prep_minutes": 25,
+                    "aliases": ["rogan josh", "rogan"],
+                    "modifier_groups": ["size", "spice-level", "extras"]
+                }
+            ]
+        },
+        {
+            "name": "Sides",
+            "slug": "sides",
+            "sort_order": 3,
+            "items": [
+                { "name": "Pilau Rice", "price": "3.60", "aliases": ["rice", "pilau"] },
+                { "name": "Garlic Naan", "price": "3.90", "aliases": ["naan", "nan bread"] }
+            ]
+        }
+    ]
+}
