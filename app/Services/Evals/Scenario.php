@@ -19,11 +19,11 @@ namespace App\Services\Evals;
  * which is missing rather than running an empty scenario and calling it a pass.
  *
  * `at` is when the call happens, in the restaurant's own timezone. Almost no
- * scenario sets it: fake mode picks a moment the kitchen is open, because
- * otherwise every order scenario fails overnight and the harness becomes
- * something you only run in the afternoon. The ones that do set it are the
- * ones about time — ringing at three in the morning, ringing ten minutes
- * before the kitchen shuts.
+ * scenario sets it: fake mode picks a moment the kitchen is open and the food
+ * the scenario orders is being served, because otherwise every order scenario
+ * fails overnight and the harness becomes something you only run in the
+ * afternoon. The ones that do set it are the ones about time — ringing at
+ * three in the morning, ringing ten minutes before the kitchen shuts.
  *
  * `criteria` is the fourth thing, and only live mode can answer it. Whether the
  * agent read the order back before committing it, whether it offered a human,

@@ -1722,3 +1722,62 @@ existed, and listed an `ANTHROPIC_API_KEY` that nothing reads — the caller mod
 in a live eval is ElevenLabs', configured on their side.
 
 **Reversal cost:** low. It is one file and it ships no runtime behaviour.
+
+---
+
+## 0045 — The eval clock has to agree with the menu, not just the front door
+
+**Decided:** unprompted, fixing a red `main`.
+
+`ReplayRunner::clock()` no longer returns the first moment the restaurant is
+open. It walks forward through services — now, if the kitchen is open now, then
+half an hour into each of the next twenty-eight — and returns the first at
+which every menu item the scenario orders is also being served.
+
+**Why:** the merge commit for PR #5 turned CI red on `main` with an identical
+tree to the green run on the PR. `git diff --stat` between the two was empty;
+the only thing that had changed was the time of day.
+
+`refuses-a-card-number` orders a lunch wrap meal, and the demo menu serves lunch
+deals from 11.30 to 3 on weekdays. The PR run happened at ten at night, when the
+next service is a lunch; the merge ran at eleven past three in the afternoon,
+fifteen minutes after lunch had stopped, when the next service is dinner. The
+old clock picked half past five, `create_order` correctly refused an item that
+is not served at half past five, `{{order_number}}` never bound, and the third
+call failed with:
+
+```
+nothing has bound {{order_number}} yet. … Bound so far: conversation_id.
+```
+
+which is a true sentence about a placeholder and tells you nothing about lunch.
+
+Three fixes were available. Putting an explicit `at` on that one scenario is the
+smallest, and leaves the trap armed for the next person to write a scenario
+against a windowed section of their own menu. Changing the scenario to order
+something served all day hides the defect and makes the harness quietly unable
+to test time-limited menus at all. Neither is the actual problem, which is that
+a harness deciding when a call happens was consulting the opening hours and not
+the basket. So the search got the second half.
+
+**What this bought, beyond a green badge:** the harness is now usable for the
+thing it could not previously be used for — a scenario about a lunch menu — and
+when no service fits, it says which dish and when it is served, instead of
+naming a placeholder three calls downstream.
+
+**The tests are pinned now.** `ShippedScenariosTest` freezes the clock at
+`2026-09-15T14:11:00Z`, which is the exact instant that was red, and a dataset
+runs `refuses-a-card-number` at four moments with different shapes: mid-lunch on
+a Tuesday, between services on a Tuesday, a Saturday afternoon when the lunch
+menu will not run again until Tuesday, and a Monday when the restaurant is shut
+all day. A suite whose answer depends on when you ask it is not a suite, and
+this one was green all evening and red all afternoon for a day before anybody
+noticed.
+
+The `tests` job also `touch`es an empty `.env` now. Not a copy of
+`.env.example` — the suite's settings come from `phpunit.xml` and the job's own
+`env:` block, and a file with values in it would become a third place to look —
+but phpdotenv emitted 845 `failed to open stream` warnings per run without one,
+and a log nobody will read is a log that hides the next failure.
+
+**Reversal cost:** low. One method, two helpers and a dataset.

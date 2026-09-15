@@ -104,6 +104,14 @@ jobs:
 
       - uses: ramsey/composer-install@v3
 
+      # Empty, and deliberately not a copy of .env.example: the suite's
+      # settings come from phpunit.xml and this job's env block, and a file
+      # with values in it would quietly become a third place to look. This
+      # exists only so phpdotenv has something to open — without it the run
+      # still passes and buries the result under eight hundred warnings.
+      - name: Give phpdotenv a file to read
+        run: touch .env
+
       # The suite runs against its own database — phpunit.xml forces
       # DB_DATABASE, so RefreshDatabase can never reach a development one. In
       # compose this is created by docker/postgres/init; here, by hand.
