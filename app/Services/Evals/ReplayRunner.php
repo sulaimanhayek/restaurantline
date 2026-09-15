@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Evals;
 
+use App\Models\MenuItem;
 use App\Models\Restaurant;
 use App\Services\ElevenLabs\ToolDefinitions;
 use App\Services\Hours\OpeningHoursService;
@@ -38,12 +39,20 @@ use Throwable;
  * It moves the clock. `create_order` refuses to take an order while the kitchen
  * is shut, correctly, which would mean this harness only worked in the
  * afternoons; so unless a scenario names its own moment, each one runs shortly
- * after the restaurant next opens. That is a liberty a replay is entitled to
- * take and a live run is not, and it is what makes two runs of the same
- * scenario comparable at all.
+ * after the next service at which everything it orders is on the menu. That is
+ * a liberty a replay is entitled to take and a live run is not, and it is what
+ * makes two runs of the same scenario comparable at all.
  */
 final class ReplayRunner
 {
+    /**
+     * How many services `clock()` will consider before giving up.
+     *
+     * Two a day in the seeded demo, so a fortnight's worth, which is the same
+     * horizon `OpeningHoursService` searches for the next opening.
+     */
+    private const SERVICES_TO_TRY = 28;
+
     public function __construct(
         private readonly Kernel $kernel,
         private readonly OutcomeGrader $grader,
@@ -126,12 +135,22 @@ final class ReplayRunner
     /**
      * When this call happens.
      *
-     * A scenario that says nothing gets a moment the kitchen is open: now, if
-     * it is open now, and otherwise half an hour into the next service. Half an
-     * hour rather than on the dot because a window that opens at five has a
-     * kitchen that is open at half past, and because an order placed in the
-     * first minute of service is a different edge case from the one most
-     * scenarios are about.
+     * A scenario that says nothing gets a moment the kitchen is open and the
+     * food it orders is being served: now, if now is such a moment, and
+     * otherwise half an hour into the first service that is. Half an hour
+     * rather than on the dot because a window that opens at five has a kitchen
+     * that is open at half past, and because an order placed in the first
+     * minute of service is a different edge case from the one most scenarios
+     * are about.
+     *
+     * The second half of that — what is being served, not merely whether the
+     * doors are open — is not obvious until it bites. A scenario ordering from
+     * the lunch menu, run at four in the afternoon, used to land at half past
+     * five: restaurant open, lunch finished hours ago, `create_order` refusing
+     * it exactly as it should. The scenario then failed for reasons that had
+     * nothing to do with what it was testing, and only between about three and
+     * eleven, which is the worst shape a failing test can have. So the search
+     * skips a service at which anything in the basket is off the menu.
      */
     private function clock(Restaurant $restaurant, Scenario $scenario): CarbonImmutable
     {
@@ -146,15 +165,9 @@ final class ReplayRunner
             }
         }
 
-        $now = CarbonImmutable::now($restaurant->timezone);
+        $moments = $this->openMoments($restaurant, CarbonImmutable::now($restaurant->timezone));
 
-        if ($this->hours->isOpenAt($restaurant, $now)) {
-            return $now;
-        }
-
-        $next = $this->hours->nextOpening($restaurant, $now);
-
-        if ($next === null) {
+        if ($moments === []) {
             throw EvalScenarioException::at(
                 $scenario->name,
                 'this restaurant has no opening hours at all, so there is no moment at which it could '
@@ -162,7 +175,115 @@ final class ReplayRunner
             );
         }
 
-        return $next->opensAt->addMinutes(30);
+        $items = $this->itemsOrdered($restaurant, $scenario);
+
+        foreach ($moments as $moment) {
+            foreach ($items as $item) {
+                if (! $item->isOrderableAt($moment)) {
+                    continue 2;
+                }
+            }
+
+            return $moment;
+        }
+
+        throw EvalScenarioException::at($scenario->name, $this->neverOnTheMenu($items, $moments));
+    }
+
+    /**
+     * Moments at which the kitchen is open, soonest first.
+     *
+     * Now if the restaurant is open now, then half an hour into each of the
+     * services after it. Bounded, because this feeds a search that is allowed
+     * to fail: a scenario ordering something that is never on the menu should
+     * be told so rather than walk the calendar looking for a Tuesday.
+     *
+     * @return list<CarbonImmutable>
+     */
+    private function openMoments(Restaurant $restaurant, CarbonImmutable $from): array
+    {
+        $moments = $this->hours->isOpenAt($restaurant, $from) ? [$from] : [];
+        $cursor = $from;
+
+        for ($service = 0; $service < self::SERVICES_TO_TRY; $service++) {
+            $next = $this->hours->nextOpening($restaurant, $cursor);
+
+            if ($next === null) {
+                break;
+            }
+
+            $moments[] = $next->opensAt->addMinutes(30);
+            $cursor = $next->opensAt;
+        }
+
+        return $moments;
+    }
+
+    /**
+     * Every menu item the scenario's calls put in a basket.
+     *
+     * By slug, and best-effort. A scenario that deliberately orders something
+     * which does not exist is testing the matcher, and should not also get a
+     * vote on what time it is; anything that fails to resolve here simply does
+     * not constrain the clock, and the call it belongs to fails on its own
+     * merits a moment later.
+     *
+     * @return list<MenuItem>
+     */
+    private function itemsOrdered(Restaurant $restaurant, Scenario $scenario): array
+    {
+        $slugs = [];
+
+        foreach ($scenario->calls as $call) {
+            foreach (Arr::wrap($call->params['items'] ?? []) as $line) {
+                if (is_array($line) && is_string($line['item'] ?? null)) {
+                    $slugs[] = $line['item'];
+                }
+            }
+        }
+
+        if ($slugs === []) {
+            return [];
+        }
+
+        return array_values(
+            MenuItem::query()
+                ->where('restaurant_id', $restaurant->id)
+                ->whereIn('slug', array_values(array_unique($slugs)))
+                ->with('category')
+                ->get()
+                ->all(),
+        );
+    }
+
+    /**
+     * The message for a scenario whose basket never comes round.
+     *
+     * Named items and their windows, because the failure this replaces said
+     * "nothing has bound {{order_number}} yet" three calls later, which is true
+     * and tells nobody anything.
+     *
+     * @param  list<MenuItem>  $items
+     * @param  list<CarbonImmutable>  $moments
+     */
+    private function neverOnTheMenu(array $items, array $moments): string
+    {
+        $last = $moments[array_key_last($moments)];
+        $blocked = [];
+
+        foreach ($items as $item) {
+            $reason = $item->unavailableReason($last);
+
+            if ($reason !== null) {
+                $blocked[] = sprintf('"%s" is %s', $item->slug, $reason);
+            }
+        }
+
+        return sprintf(
+            'there is no service in the next fortnight at which everything it orders is on the menu (%s). '
+            .'Give the scenario an explicit "at", or order something served all day.',
+            $blocked === [] ? 'the harness cannot say which item' : implode('; ', $blocked),
+        );
     }
 
     // -----------------------------------------------------------------------
