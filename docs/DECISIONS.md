@@ -1781,3 +1781,36 @@ but phpdotenv emitted 845 `failed to open stream` warnings per run without one,
 and a log nobody will read is a log that hides the next failure.
 
 **Reversal cost:** low. One method, two helpers and a dataset.
+
+---
+
+## 0046 — Every published port binds to loopback, including the app's
+
+**Decided:** after finding the dashboard readable from another machine on a
+public library's WiFi.
+
+`compose.yaml` published seven ports. Four of them — postgres, redis, and
+Mailpit's two — were written as
+`"${DOCKER_BIND_ADDRESS:-127.0.0.1}:${PORT}:port"`. Three were not: `app` on
+8000, `reverb` on 8080 and `vite` on 5173 were bare `"${PORT}:port"`, which
+Docker binds to `0.0.0.0`. All three now carry the same prefix as the rest.
+
+**What that actually exposed.** `netstat -an -p tcp | grep LISTEN` showed
+`*.8000` rather than `127.0.0.1.8000`, and `curl http://<lan-ip>:8000/horizon`
+from the same network returned HTTP 200 with no authentication — Horizon's
+default gate is `app()->environment('local')`, which is a no-op on exactly the
+machine a developer runs it on. So on any untrusted network, a fresh clone of
+this repository served its queue dashboard, its Filament panel, and an admin
+password printed in its own README to everyone in the room. After the fix the
+same curl returns HTTP 000 and `curl http://127.0.0.1:8000/api/agent/hours`
+still returns its 401, which is the pair worth checking: refused from outside,
+unchanged from inside.
+
+**Why it was worth interrupting for.** The env var was already there, already
+documented, and already used by the services a developer is taught to think of
+as sensitive. The three that missed it are the three a developer thinks of as
+"just the app" — which is the one that has the session cookies, the dashboard
+and the order data. `DOCKER_BIND_ADDRESS` still exists for anyone who wants to
+reach the app from a phone on the same LAN; they now have to say so.
+
+**Reversal cost:** none. Seven lines that now say the same thing.
