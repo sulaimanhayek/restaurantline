@@ -181,6 +181,49 @@ return [
 
     /*
     |----------------------------------------------------------------------
+    | Demo rendering
+    |----------------------------------------------------------------------
+    |
+    | `kitchenline:demo:render` reads a transcript that already exists and
+    | speaks it with two voices, so there is something to play to a client.
+    | It is presentation tooling, not part of taking an order, and nothing in
+    | the ordering flow reads any of this.
+    |
+    */
+    'demo' => [
+        /*
+         * The two voices. Find ids under Voices in the ElevenLabs dashboard,
+         * or from GET /v1/voices.
+         *
+         * No defaults on purpose. Inventing two ids here would give every fork
+         * the same pair of voices, and a wrong id fails at render time with a
+         * 404 that reads like a bug in this application rather than a value
+         * somebody has to choose.
+         */
+        'caller_voice_id' => env('DEMO_CALLER_VOICE_ID'),
+
+        // Falls back to the agent's own voice, which is the right default:
+        // the recording should sound like the thing that answers the phone.
+        'agent_voice_id' => env('DEMO_AGENT_VOICE_ID', env('ELEVENLABS_VOICE_ID')),
+
+        /*
+         * Must be one of ElevenLabs' `wav_*` formats. The renderer joins turns
+         * by concatenating their samples, which needs uncompressed audio, and
+         * 44.1kHz WAV requires a Pro subscription — so 24kHz is both the
+         * format that works and the one the free tier can render.
+         */
+        'output_format' => env('DEMO_OUTPUT_FORMAT', 'wav_24000'),
+
+        // The pause between turns. Real callers do not interrupt cleanly, and
+        // back-to-back speech sounds like a machine reading a script.
+        'gap_seconds' => (float) env('DEMO_GAP_SECONDS', 0.55),
+
+        // Where rendered demos are written, relative to storage/app.
+        'path' => env('DEMO_PATH', 'demos'),
+    ],
+
+    /*
+    |----------------------------------------------------------------------
     | Twilio and SMS
     |----------------------------------------------------------------------
     |

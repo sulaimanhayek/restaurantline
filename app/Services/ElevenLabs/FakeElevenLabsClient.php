@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\ElevenLabs;
 
+use App\Services\Demo\WavFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
@@ -35,6 +36,13 @@ use Illuminate\Support\Str;
 final class FakeElevenLabsClient implements ElevenLabsClient
 {
     private const CACHE_KEY = 'restaurantline:elevenlabs-fake-workspace';
+
+    /**
+     * Roughly conversational pace, used only to give silent audio a plausible
+     * length. About 150 words a minute, which is what an unhurried person
+     * taking an order on the telephone sounds like.
+     */
+    private const CHARACTERS_PER_SECOND = 13.0;
 
     /** @var array<string, array<string, mixed>> */
     private array $tools = [];
@@ -254,6 +262,48 @@ final class FakeElevenLabsClient implements ElevenLabsClient
             .'to fake. Set ELEVENLABS_DRIVER=api with a key to run live evals, or run `kitchenline:eval` '
             .'without --mode=live to replay the scenarios against this application instead.',
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Speech
+    // -----------------------------------------------------------------------
+
+    /**
+     * Silence, for as long as the line would have taken to say.
+     *
+     * Unlike `simulateConversation`, this one pretends rather than refuses, and
+     * the difference is what a wrong answer would cost. A fabricated transcript
+     * graded as a pass is a lie that hides a broken agent. A silent WAV is a
+     * lie nobody can act on: play it to a client and you hear nothing, which is
+     * unmistakable. What it buys is that the whole render path — the stitching,
+     * the pauses, the header arithmetic, the file on disk — is exercised by the
+     * test suite and by anyone trying the command before they have a key.
+     *
+     * `kitchenline:demo:render` says loudly that the audio is silent whenever
+     * this driver produced it, so nobody discovers it at the meeting.
+     *
+     * The duration is derived from the text at roughly conversational pace, so
+     * a rendered demo has believable proportions: the agent's long read-back
+     * really is longer than the caller saying "yes, that's right".
+     */
+    public function textToSpeech(string $voiceId, string $text, string $outputFormat): string
+    {
+        return WavFile::silent($this->sampleRateIn($outputFormat), mb_strlen($text) / self::CHARACTERS_PER_SECOND)
+            ->toBytes();
+    }
+
+    /**
+     * The sample rate named in a `wav_24000`-style format string.
+     *
+     * Anything it cannot read falls back to 24kHz rather than throwing: the
+     * fake's job is to keep a developer moving, and an unfamiliar format string
+     * is the real driver's argument to have.
+     */
+    private function sampleRateIn(string $outputFormat): int
+    {
+        return preg_match('/_(\d{4,6})$/', $outputFormat, $matches) === 1
+            ? (int) $matches[1]
+            : 24_000;
     }
 
     // -----------------------------------------------------------------------

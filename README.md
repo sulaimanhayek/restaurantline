@@ -302,6 +302,40 @@ restaurant:
 
 ---
 
+## Playing a call to somebody who is not on it
+
+A conversation is what you are selling, and it does not survive being printed.
+`kitchenline:demo:render` takes a transcript this application already stored and
+speaks it with two voices — one for the caller, one for the agent — so you can
+play a real order to a restaurant owner sitting across a table with no phone
+line, no tunnel and no signal.
+
+```bash
+php artisan kitchenline:demo:render                 # the most recent call
+php artisan kitchenline:demo:render conv_abc123     # a particular one
+php artisan kitchenline:demo:render --out=pitch.wav
+```
+
+The transcripts come from wherever you have them: `migrate --seed` writes five
+demo calls, `kitchenline:eval --mode=live` produces real ones, and so does every
+real call once the post-call webhook has landed. Set `DEMO_CALLER_VOICE_ID` and
+`DEMO_AGENT_VOICE_ID` before you run it against a real account — pick the second
+to match `ELEVENLABS_VOICE_ID`, so the recording sounds like the thing that
+answers the phone.
+
+In fake mode it writes a silent file of the right length and tells you so in a
+yellow box, every time. That is so the command runs on a fresh clone, and so
+nobody finds out at the meeting.
+
+This is the only code here that touches audio, and it is deliberately downstream
+of everything: it never runs while a caller is on the line, nothing in the
+ordering flow calls it, and deleting it would change nothing about what happens
+when the phone rings. Handling live call audio is the hard, expensive part of a
+voice application and is the entire reason the voice lives at ElevenLabs. See
+[docs/DECISIONS.md](docs/DECISIONS.md) entry 0047.
+
+---
+
 ## Everything that talks to the outside world has a fake
 
 The fake is always the default, so a fresh clone runs, and the whole test suite

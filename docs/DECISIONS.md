@@ -1814,3 +1814,75 @@ and the order data. `DOCKER_BIND_ADDRESS` still exists for anyone who wants to
 reach the app from a phone on the same LAN; they now have to say so.
 
 **Reversal cost:** none. Seven lines that now say the same thing.
+
+---
+
+## 0047 — A repository that scopes out audio nonetheless ships a TTS renderer
+
+**Decided:** while building a demo for a client meeting, without asking.
+
+`kitchenline:demo:render` reads a transcript this application already stored and
+asks ElevenLabs to speak it with two voices, writing a `.wav` you can play to
+somebody. It is the only code here that touches audio, and this repository is
+explicit everywhere else that it does not: no stream, no turn-taking, no
+websocket, no buffers. `SimulationRunner`'s docblock says "There is no audio
+anywhere in this" and that is still true of the ordering path.
+
+**Why the exception is not a crack in the rule.** The rule is about the live
+call. Handling the audio of a conversation in progress is the thing that makes a
+voice application hard, expensive and fragile, and it is exactly the thing
+ElevenLabs is being paid for. Speaking a transcript that finished an hour ago
+shares a vendor with that and nothing else: it is offline, it is not on any
+request path, nothing in the ordering flow calls it, and if it broke completely
+no caller would notice. Put the other way — the test for whether this belongs is
+whether deleting it changes what happens when the phone rings. It does not.
+
+**Why it exists at all.** The thing being sold is a conversation, and a
+conversation is not legible on paper. A freelancer showing this to a restaurant
+owner has three options: put them on a real call, which needs a provisioned
+agent, a phone number and a network; show them a transcript, which reads like a
+chat log and demonstrates none of the pacing that makes a voice agent
+convincing; or play them a recording. The third is the only one that works from
+a laptop in a room with no signal, and it was a couple of hundred lines.
+
+**`wav_24000`, and the three constraints that left one answer.** Turns are
+joined by concatenating their samples, which is the whole of the stitching
+implementation, and that needs uncompressed audio — MP3 frames cannot simply be
+appended, and building the silence between turns as valid MP3 frames would be
+precisely the audio engineering this project refuses to do. That rules out every
+`mp3_*` format. ElevenLabs then gates the rest by subscription: their docs say
+PCM and WAV at 44.1kHz require Pro, and 192kbps MP3 requires Creator. And there
+is no `ffmpeg` in the container or on the host, so there is no conversion step
+available to paper over a wrong choice. `wav_24000` is uncompressed, joinable by
+string concatenation, and free-tier. It is not a preference; it is the
+intersection.
+
+**The parser walks RIFF chunks rather than skipping 44 bytes.** A canonical WAV
+header is 44 bytes and ElevenLabs currently sends one, so reading from byte 44
+would work today. It would also turn a `LIST` or `fact` chunk — which any
+encoder may legally insert, and some do — into a burst of static at the top of
+every turn, in a file whose only job is to be played to a client. The chunk walk
+is fifteen lines and removes the entire class.
+
+**The fake pretends here, where it refuses elsewhere.** `simulateConversation`
+throws in fake mode, because a fabricated transcript graded as a pass is a lie
+that hides a broken agent. `textToSpeech` returns silence of a plausible length
+instead, because the asymmetry runs the other way: a silent file is a lie nobody
+can act on — you play it and hear nothing, which is unmistakable — and in
+exchange the whole render path, stitching and pauses and header arithmetic and
+the file on disk, is exercised by CI and by anyone trying the command before
+they have an account. The command prints `THIS FILE IS SILENT` in a yellow box
+on every fake-mode run, so the discovery happens at the terminal rather than at
+the meeting.
+
+**No default voice ids.** `DEMO_CALLER_VOICE_ID` and `DEMO_AGENT_VOICE_ID` ship
+empty and the command refuses to call a real account without both. Inventing two
+would give every fork of this repository the same pair of voices, and a stale or
+wrong id fails at render time with a 404 that reads like a bug in this
+application rather than a value somebody has to choose.
+
+**Reversal cost:** low, and containable. Four classes under `App\Services\Demo`,
+one command, one interface method with three implementations, and a `demo` block
+in `config/restaurantline.php`. Nothing else imports any of it. If the
+no-audio line needs to be drawn harder later, the whole thing lifts out in one
+commit without touching a single line that runs while a caller is on the phone.

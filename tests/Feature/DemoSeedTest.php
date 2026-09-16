@@ -8,8 +8,11 @@ use App\Models\Conversation;
 use App\Models\MenuItem;
 use App\Models\Modifier;
 use App\Models\Order;
+use App\Models\OrderItem;
 use App\Models\Restaurant;
+use App\Models\SmsMessage;
 use Database\Seeders\DatabaseSeeder;
+use Database\Seeders\DemoOrdersSeeder;
 use Database\Seeders\DemoRestaurantSeeder;
 use Database\Seeders\SampleMenuSeeder;
 
@@ -113,4 +116,60 @@ it('never records a payment taken over the phone', function (): void {
     )->all();
 
     expect($statuses)->each->toBeIn(['unpaid', 'link_sent', 'paid', 'cash_on_collection', 'refunded', 'failed']);
+});
+
+it('runs the day of traffic twice without duplicating any of it', function (): void {
+    $before = [
+        'conversations' => Conversation::count(),
+        'orders' => Order::count(),
+        'items' => OrderItem::count(),
+        'texts' => SmsMessage::count(),
+    ];
+
+    $this->seed(DemoOrdersSeeder::class);
+
+    // The reason this is worth a test: the conversation ids used to be random,
+    // which turned every `updateOrCreate` in the seeder into a `create` and
+    // filled the dashboard with copies of the same evening. Naming them made
+    // reseeding collide instead, which is at least loud.
+    expect(Conversation::count())->toBe($before['conversations'])
+        ->and(Order::count())->toBe($before['orders'])
+        ->and(OrderItem::count())->toBe($before['items'])
+        ->and(SmsMessage::count())->toBe($before['texts'])
+        // An order is replaced rather than merged, and the texts' foreign key
+        // is `set null`, so a careless delete leaves them on the SMS screen
+        // attached to nothing.
+        ->and(SmsMessage::whereNull('order_id')->count())->toBe(0);
+});
+
+it('seeds one call long enough to be worth playing to somebody', function (): void {
+    $call = Conversation::where('elevenlabs_conversation_id', 'conv_demo_delivery')->firstOrFail();
+
+    $turns = $call->transcriptTurns();
+    $said = implode(' ', array_column($turns, 'message'));
+
+    // `kitchenline:demo:render conv_demo_delivery` is documented in the README
+    // by that name, and it is the demo a forker shows a restaurant owner. Four
+    // lines of shorthand would render to twenty seconds of nothing much.
+    expect($turns)->toHaveCount(20)
+        ->and($call->order)->not->toBeNull()
+        // All four rules, in the order a real call meets them.
+        ->and($said)->toContain('read that back')
+        ->and($said)->toContain('read the whole thing back')
+        ->and($said)->toContain('not able to take card details over the phone')
+        ->and($said)->toContain('get you a person');
+});
+
+it('alternates speakers often enough for two voices to be worth it', function (): void {
+    $roles = array_column(
+        Conversation::where('elevenlabs_conversation_id', 'conv_demo_delivery')->firstOrFail()->transcriptTurns(),
+        'role',
+    );
+
+    // A transcript where one side says six things in a row renders as a
+    // monologue, whichever voices you give it.
+    expect($roles)->toBe(array_map(
+        fn (int $index): string => $index % 2 === 0 ? 'agent' : 'user',
+        range(0, count($roles) - 1),
+    ));
 });

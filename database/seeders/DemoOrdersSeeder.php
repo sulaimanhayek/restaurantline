@@ -54,7 +54,7 @@ class DemoOrdersSeeder extends Seeder
     private function liveCollectionOrder(Restaurant $restaurant): void
     {
         $customer = $this->customer($restaurant, '+447700900001', 'Priya Raman', orders: 3);
-        $conversation = $this->conversation($restaurant, $customer->phone_number, ConversationOutcome::OrderPlaced, [
+        $conversation = $this->conversation($restaurant, 'collection', $customer->phone_number, ConversationOutcome::OrderPlaced, [
             ['role' => 'agent', 'message' => 'Ember Grill, is it delivery or collection?'],
             ['role' => 'user', 'message' => 'Collection please.'],
             ['role' => 'user', 'message' => 'Half a chicken, hot, and some wings.'],
@@ -70,6 +70,7 @@ class DemoOrdersSeeder extends Seeder
         $chips = $this->modifier($restaurant, 'chips');
 
         $order = $this->order($restaurant, $customer, $conversation, [
+            'order_number' => '102',
             'fulfilment_type' => FulfilmentType::Collection,
             'status' => OrderStatus::Preparing,
             'payment_method' => PaymentMethod::Cash,
@@ -119,17 +120,47 @@ class DemoOrdersSeeder extends Seeder
             ],
         );
 
-        $conversation = $this->conversation($restaurant, $customer->phone_number, ConversationOutcome::OrderPlaced, [
-            ['role' => 'agent', 'message' => 'Ember Grill, is it delivery or collection?'],
-            ['role' => 'user', 'message' => 'Delivery. Forty two Cheshire Street, flat B.'],
-            ['role' => 'agent', 'message' => 'Forty two Cheshire Street, flat B, E2 6EH. Is that right?'],
-            ['role' => 'user', 'message' => 'That is it. Double beef burger, no onions, and chips.'],
+        /*
+         * The long one, and the only seeded transcript written to be listened
+         * to rather than skimmed. `kitchenline:demo:render conv_demo_delivery`
+         * speaks it with two voices, so a restaurant owner can hear the thing
+         * being sold before anybody has provisioned a phone number.
+         *
+         * Every rule in the README happens somewhere in it, in the order a
+         * real call would meet them: the address is read back and agreed to
+         * before it is used, the basket is read back with its price before any
+         * row exists, the card is refused out loud and turned into a text, and
+         * a human is offered rather than waited for. A demo of a voice agent
+         * that only shows it taking an order is a demo of the easy half.
+         */
+        $conversation = $this->conversation($restaurant, 'delivery', $customer->phone_number, ConversationOutcome::OrderPlaced, [
+            ['role' => 'agent', 'message' => 'Good evening, Ember Grill. Is it delivery or collection tonight?'],
+            ['role' => 'user', 'message' => 'Delivery please.'],
+            ['role' => 'agent', 'message' => 'Lovely. What is the address?'],
+            ['role' => 'user', 'message' => 'Forty two Cheshire Street, flat B. E2.'],
+            ['role' => 'agent', 'message' => 'Let me read that back — forty two Cheshire Street, flat B, London E2 6EH. Have I got that right?'],
+            ['role' => 'user', 'message' => 'That is the one.'],
+            ['role' => 'agent', 'message' => 'Thank you. You are well inside the area, about ten minutes away. What can I get you?'],
+            ['role' => 'user', 'message' => 'A double beef burger, but no onions on it. And chips.'],
+            ['role' => 'agent', 'message' => 'No onions, noted. The double beef comes on a brioche bun with chips on the side — would you like the chips as your side, or as a separate portion as well?'],
+            ['role' => 'user', 'message' => 'Do both. Make the extra one a large.'],
+            ['role' => 'agent', 'message' => 'Anything else at all?'],
+            ['role' => 'user', 'message' => 'No, that is it. Oh — the buzzer is broken, so tell the driver to ring my mobile.'],
+            ['role' => 'agent', 'message' => 'I will put that on the order. Let me read the whole thing back to you. One double beef burger on brioche, no onions, chips on the side. One large chips. Delivery to forty two Cheshire Street, flat B. That is fifteen pounds, plus one pound ninety nine delivery, so sixteen pounds ninety nine all in, about forty five minutes. Shall I send it to the kitchen?'],
+            ['role' => 'user', 'message' => 'Yes, go on. Can I give you my card number now?'],
+            ['role' => 'agent', 'message' => 'I am not able to take card details over the phone, and I would not want to — I will text you a secure payment link the moment we hang up. Or you can pay the driver cash at the door, whichever you prefer.'],
+            ['role' => 'user', 'message' => 'The link is fine.'],
+            ['role' => 'agent', 'message' => 'Can I take a name and the best number for that text?'],
+            ['role' => 'user', 'message' => 'Tom Whitaker. Oh seven seven double oh, nine double oh, double oh two.'],
+            ['role' => 'agent', 'message' => 'You are all set, Tom — sixteen ninety nine, with you in about forty five minutes, and the order number is in the text. The link is on its way. If anything is wrong with it, say "put me through" when you call back and I will get you a person. Thanks very much.'],
+            ['role' => 'user', 'message' => 'Great, thanks. Bye.'],
         ]);
 
         $burger = $this->item($restaurant, 'double-beef-burger');
         $chips = $this->item($restaurant, 'chips');
 
         $order = $this->order($restaurant, $customer, $conversation, [
+            'order_number' => '103',
             'fulfilment_type' => FulfilmentType::Delivery,
             'address_id' => $address->id,
             'status' => OrderStatus::Confirmed,
@@ -180,7 +211,7 @@ class DemoOrdersSeeder extends Seeder
     private function completedOrder(Restaurant $restaurant): void
     {
         $customer = $this->customer($restaurant, '+447700900003', 'Dawn Okafor', orders: 12);
-        $conversation = $this->conversation($restaurant, $customer->phone_number, ConversationOutcome::OrderPlaced, [
+        $conversation = $this->conversation($restaurant, 'regular', $customer->phone_number, ConversationOutcome::OrderPlaced, [
             ['role' => 'agent', 'message' => 'Ember Grill — hello again. Collection?'],
             ['role' => 'user', 'message' => 'Yes. The usual, veggie burger, no mayo.'],
         ], startedAt: now()->subDay());
@@ -188,6 +219,7 @@ class DemoOrdersSeeder extends Seeder
         $burger = $this->item($restaurant, 'halloumi-avocado-burger');
 
         $order = $this->order($restaurant, $customer, $conversation, [
+            'order_number' => '101',
             'fulfilment_type' => FulfilmentType::Collection,
             'status' => OrderStatus::Completed,
             'payment_method' => PaymentMethod::Cash,
@@ -228,7 +260,7 @@ class DemoOrdersSeeder extends Seeder
      */
     private function abandonedCall(Restaurant $restaurant): void
     {
-        $this->conversation($restaurant, '+447700900004', ConversationOutcome::OrderAbandoned, [
+        $this->conversation($restaurant, 'abandoned', '+447700900004', ConversationOutcome::OrderAbandoned, [
             ['role' => 'agent', 'message' => 'Ember Grill, is it delivery or collection?'],
             ['role' => 'user', 'message' => 'Delivery. Hang on — how long is it?'],
             ['role' => 'agent', 'message' => 'About forty five minutes tonight.'],
@@ -238,7 +270,7 @@ class DemoOrdersSeeder extends Seeder
 
     private function outOfAreaCall(Restaurant $restaurant): void
     {
-        $this->conversation($restaurant, '+447700900005', ConversationOutcome::OutsideDeliveryArea, [
+        $this->conversation($restaurant, 'out_of_area', '+447700900005', ConversationOutcome::OutsideDeliveryArea, [
             ['role' => 'agent', 'message' => 'Ember Grill, is it delivery or collection?'],
             ['role' => 'user', 'message' => 'Delivery to Ealing.'],
             ['role' => 'agent', 'message' => 'I am sorry, Ealing is outside our delivery area — we go about three miles from Brick Lane. You are very welcome to collect.'],
@@ -260,10 +292,19 @@ class DemoOrdersSeeder extends Seeder
     }
 
     /**
+     * `$key` names the call rather than randomising it.
+     *
+     * A random id here would make `updateOrCreate` a very slow `create`: the
+     * key it looks for has never existed, so every reseed lays down another
+     * five conversations and the dashboard fills with duplicates of the same
+     * evening. Naming them also makes them addressable, which is what
+     * `kitchenline:demo:render conv_demo_delivery` relies on.
+     *
      * @param  list<array{role: string, message: string}>  $transcript
      */
     private function conversation(
         Restaurant $restaurant,
+        string $key,
         string $callerNumber,
         ConversationOutcome $outcome,
         array $transcript,
@@ -274,7 +315,7 @@ class DemoOrdersSeeder extends Seeder
         $startedAt ??= now()->subMinutes(12);
 
         return Conversation::query()->updateOrCreate(
-            ['elevenlabs_conversation_id' => 'conv_demo_'.Str::lower(Str::random(16))],
+            ['elevenlabs_conversation_id' => 'conv_demo_'.$key],
             [
                 'restaurant_id' => $restaurant->id,
                 'elevenlabs_agent_id' => $restaurant->elevenlabs_agent_id ?? 'agent_demo_seed',
@@ -293,16 +334,40 @@ class DemoOrdersSeeder extends Seeder
     }
 
     /**
+     * The order this call produced, rewritten from scratch on every seed.
+     *
+     * Replaced rather than updated because an order is a tree — lines,
+     * modifiers, texts — and merging a new shape onto an old one leaves the
+     * removed half behind. `orders` is unique on the conversation id, so there
+     * is exactly one to clear. The texts go by hand: their foreign key is
+     * `set null` on delete, which is right for a real order somebody deletes
+     * and wrong here, where it would leave an orphan on the SMS screen after
+     * every reseed.
+     *
      * @param  array<string, mixed>  $attributes
      */
     private function order(Restaurant $restaurant, Customer $customer, Conversation $conversation, array $attributes): Order
     {
+        $existing = Order::query()
+            ->where('restaurant_id', $restaurant->id)
+            ->where('elevenlabs_conversation_id', $conversation->elevenlabs_conversation_id)
+            ->first();
+
+        if ($existing !== null) {
+            SmsMessage::query()->where('order_id', $existing->id)->delete();
+            $existing->delete();
+        }
+
         $order = new Order;
 
         $order->forceFill(array_merge([
             'restaurant_id' => $restaurant->id,
             'customer_id' => $customer->id,
-            'order_number' => $this->nextOrderNumber($restaurant),
+            // Fixed rather than counted, so reseeding produces the same three
+            // orders instead of colliding with the ones it left alone. No zero
+            // padding: the agent reads these back digit by digit, and "zero one
+            // zero one" is a worse thing to hear than "one oh one".
+            'order_number' => '100',
             'source' => OrderSource::Voice,
             'subtotal' => 0,
             'delivery_fee' => 0,
@@ -408,15 +473,6 @@ class DemoOrdersSeeder extends Seeder
             'subtotal' => $subtotal,
             'total' => $subtotal + $order->delivery_fee,
         ])->save();
-    }
-
-    private function nextOrderNumber(Restaurant $restaurant): string
-    {
-        $count = Order::query()->where('restaurant_id', $restaurant->id)->count();
-
-        // No zero padding: the agent reads this back digit by digit, and
-        // "zero one zero one" is a worse thing to hear than "one oh one".
-        return (string) ($count + 101);
     }
 
     private function item(Restaurant $restaurant, string $slug): MenuItem
