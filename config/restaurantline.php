@@ -27,6 +27,16 @@ return [
     'seed_on_boot' => (bool) env('RESTAURANTLINE_SEED_ON_BOOT', true),
 
     /*
+     * The password DemoRestaurantSeeder gives the dashboard login it creates.
+     *
+     * Left unset on a laptop, where the seeder falls back to a password
+     * printed in this repository's README and says so every time it runs. Set
+     * it anywhere a stranger can reach the login page — the seeder refuses to
+     * fall back in production rather than quietly creating a known account.
+     */
+    'admin_password' => env('ADMIN_PASSWORD'),
+
+    /*
     |----------------------------------------------------------------------
     | Agent tool endpoints
     |----------------------------------------------------------------------

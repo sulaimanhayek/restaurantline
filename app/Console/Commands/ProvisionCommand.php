@@ -53,6 +53,7 @@ final class ProvisionCommand extends Command
         $this->newLine();
 
         $this->warnAboutUnreachableUrls();
+        $this->warnAboutWhatElseIsPublished();
         $this->warnAboutTheExampleToken();
 
         if ($this->option('dry-run')) {
@@ -115,6 +116,11 @@ final class ProvisionCommand extends Command
     }
 
     /**
+     * Hostnames that only resolve on the machine that typed them.
+     */
+    private const PRIVATE_URL_NEEDLES = ['localhost', '127.0.0.1', '0.0.0.0', '.local', '.test'];
+
+    /**
      * The commonest reason a freshly provisioned agent does nothing.
      *
      * ElevenLabs calls the tool URLs from its own infrastructure, so an APP_URL
@@ -123,21 +129,75 @@ final class ProvisionCommand extends Command
      */
     private function warnAboutUnreachableUrls(): void
     {
-        $url = (string) config('app.url');
-
-        foreach (['localhost', '127.0.0.1', '0.0.0.0', '.local', '.test'] as $needle) {
-            if (! str_contains($url, $needle)) {
-                continue;
-            }
-
-            $this->components->warn(
-                'APP_URL is '.$url.', which ElevenLabs cannot reach. The agent will answer the phone and '
-                .'then fail every tool call. Point APP_URL at a public address — an ngrok tunnel is fine for '
-                .'testing — and run this again.',
-            );
-
+        if ($this->appUrlIsPublic()) {
             return;
         }
+
+        $this->components->warn(
+            'APP_URL is '.config('app.url').', which ElevenLabs cannot reach. The agent will answer the '
+            .'phone and then fail every tool call. Point APP_URL at a public address — an ngrok tunnel is '
+            .'fine for testing — and run this again.',
+        );
+    }
+
+    /**
+     * The other half of making this application reachable, which nobody means
+     * to do.
+     *
+     * A tunnel does not publish nine tool endpoints. It publishes a hostname,
+     * and everything this application serves on it: the dashboard, the kitchen
+     * display, the queue dashboard, the debug handler. Provisioning is the
+     * moment that hostname starts existing, so it is the moment to say which
+     * of those are currently worth worrying about — and to say only those, so
+     * the warning stays worth reading rather than becoming scenery.
+     */
+    private function warnAboutWhatElseIsPublished(): void
+    {
+        if (! $this->appUrlIsPublic()) {
+            return;
+        }
+
+        $problems = [];
+
+        if (config('app.debug') === true) {
+            $problems[] = 'APP_DEBUG is true, so any unhandled error renders a debug page that lists your '
+                .'environment — including ELEVENLABS_API_KEY and the database password. The agent endpoints '
+                .'are exempt by design; nothing else is.';
+        }
+
+        if (! is_string(config('restaurantline.admin_password')) || config('restaurantline.admin_password') === '') {
+            $problems[] = 'ADMIN_PASSWORD is unset, so the dashboard login is the one printed in this '
+                .'repository\'s README. Set it and re-run `db:seed` to rotate it.';
+        }
+
+        if ($problems === []) {
+            return;
+        }
+
+        $this->newLine();
+        $this->line('  <bg=yellow;fg=black> '.config('app.url').' IS PUBLIC, AND SO IS EVERYTHING ON IT </>');
+        $this->newLine();
+
+        foreach ($problems as $problem) {
+            $this->line('  <fg=gray>-</> '.wordwrap($problem, 92, PHP_EOL.'    '));
+            $this->newLine();
+        }
+    }
+
+    /**
+     * Whether APP_URL names somewhere other than this machine.
+     */
+    private function appUrlIsPublic(): bool
+    {
+        $url = (string) config('app.url');
+
+        foreach (self::PRIVATE_URL_NEEDLES as $needle) {
+            if (str_contains($url, $needle)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

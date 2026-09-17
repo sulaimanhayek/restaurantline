@@ -198,6 +198,63 @@ describe('the warning that saves an evening', function (): void {
 
         expect($output)->not->toContain('ngrok');
     });
+
+    /*
+     * The inverse warning, and the one that costs more when it is missing.
+     *
+     * Making this application reachable is a step the README asks for, and a
+     * tunnel does not publish nine endpoints — it publishes a hostname and
+     * everything served on it. These check that the command names whichever
+     * of those is currently a problem, and stays quiet about the rest.
+     */
+    it('says the debug page is public once the hostname is', function (): void {
+        restaurant();
+        config(['app.debug' => true]);
+
+        [, $output] = runProvision(['--dry-run' => true]);
+
+        expect($output)->toContain('IS PUBLIC')
+            ->toContain('APP_DEBUG is true')
+            ->toContain('ELEVENLABS_API_KEY');
+    });
+
+    it('says the dashboard password is the published one, while it still is', function (): void {
+        restaurant();
+        config(['restaurantline.admin_password' => null]);
+
+        [, $output] = runProvision(['--dry-run' => true]);
+
+        expect($output)->toContain('ADMIN_PASSWORD is unset');
+    });
+
+    it('drops each line as its problem is fixed', function (): void {
+        restaurant();
+        config([
+            'app.debug' => false,
+            'restaurantline.admin_password' => 'set-by-the-person-deploying-it',
+        ]);
+
+        [, $output] = runProvision(['--dry-run' => true]);
+
+        expect($output)->not->toContain('IS PUBLIC')
+            ->not->toContain('APP_DEBUG is true')
+            ->not->toContain('ADMIN_PASSWORD is unset');
+    });
+
+    /*
+     * A laptop-only APP_URL publishes nothing, so the same debug page and the
+     * same seeded password are nobody's problem. Saying so anyway would train
+     * a reader to scroll past the box on the day it matters.
+     */
+    it('raises none of it while the hostname is still private', function (): void {
+        restaurant();
+        config(['app.url' => 'http://localhost:8000', 'app.debug' => true]);
+
+        [, $output] = runProvision(['--dry-run' => true]);
+
+        expect($output)->not->toContain('IS PUBLIC')
+            ->not->toContain('APP_DEBUG is true');
+    });
 });
 
 describe('--phone-number', function (): void {

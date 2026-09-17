@@ -131,8 +131,13 @@ between 11:30 and 3pm on weekdays — and a handful of orders in various states.
 | Horizon | <http://localhost:8000/horizon> |
 | Mailpit | <http://localhost:8025> |
 
-The seeded dashboard login is `owner@embergrill.example` / `password`. It is a
-demo seeder; `DemoRestaurantSeeder` is not something to run in production.
+The seeded dashboard login is `owner@embergrill.example` / `password`, and
+Horizon sits behind that same login rather than behind Laravel's default, which
+is "anyone at all, as long as `APP_ENV` is `local`".
+
+That password is in this file, so it is public. Set `ADMIN_PASSWORD` in `.env`
+and re-run `db:seed` to rotate it — the seeder refuses the published fallback
+outright when `APP_ENV=production`.
 
 Now watch it take an order without a telephone anywhere in sight:
 
@@ -163,13 +168,35 @@ own infrastructure, so `APP_URL=http://localhost:8000` produces an agent that
 answers the phone, sounds perfect, and cannot look up a single dish. An ngrok
 tunnel is fine for testing. `kitchenline:provision` warns you about this.
 
+> **A tunnel does not publish nine endpoints. It publishes a hostname.**
+>
+> Everything this application serves is then on it, reachable by anyone who
+> guesses the URL — not just `/api/agent/*`. Before you start one:
+>
+> - **`APP_DEBUG=false`.** Otherwise any unhandled error renders a page listing
+>   your whole environment: `ELEVENLABS_API_KEY`, `AGENT_API_TOKEN`, the
+>   database password. The agent endpoints never return a stack trace whatever
+>   this is set to — see `bootstrap/app.php` — but `/admin` and the webhooks
+>   will.
+> - **Set `ADMIN_PASSWORD` and re-seed.** `/admin` is on that hostname, and
+>   until you do, its password is three paragraphs up this page.
+> - **Set `AGENT_API_TOKEN`.** Step 2. It is the only thing between a stranger
+>   and your order endpoints.
+>
+> `/horizon` is already behind a login, so it is not on this list. Queue
+> payloads in this application are orders — names, telephone numbers, delivery
+> addresses — which is why it is not left on Laravel's default.
+>
+> `kitchenline:provision` re-checks the first two every run and names whichever
+> is still outstanding.
+
 **2. Set a real agent token.** `AGENT_API_TOKEN` is the shared secret between
 ElevenLabs and your order endpoints. The value in `.env.example` is published in
 this repository; `AuthenticateAgent` refuses it outright when `APP_ENV` is
 `production`.
 
 ```bash
-php -r "echo bin2hex(random_bytes(32));"
+docker compose exec app php -r "echo bin2hex(random_bytes(32));"
 ```
 
 **3. Provision.**

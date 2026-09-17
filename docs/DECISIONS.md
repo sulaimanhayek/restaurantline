@@ -1886,3 +1886,97 @@ one command, one interface method with three implementations, and a `demo` block
 in `config/restaurantline.php`. Nothing else imports any of it. If the
 no-audio line needs to be drawn harder later, the whole thing lifts out in one
 commit without touching a single line that runs while a caller is on the phone.
+
+---
+
+## 0048 — Horizon gets a login, and the tunnel instruction gets a warning box
+
+**Decided:** while hardening the repository after the port-binding fix in 0046,
+without asking.
+
+Horizon's dashboard is now behind `Horizon::auth`, which asks for an
+authenticated user and nothing else. Its default is
+`app()->environment('local')`.
+
+**Why that default is wrong here specifically.** Not because it is insecure in
+general — for a lot of applications it is a reasonable trade, since a queue
+dashboard on a laptop is nobody's business but the laptop's. It is wrong here
+because of a sentence in this repository's own README: "An ngrok tunnel is fine
+for testing." That instruction exists because the agent tool endpoints have to
+be reachable from ElevenLabs' infrastructure, and it is the normal path through
+this project rather than an unusual one. The moment a reader follows it, a
+machine running `APP_ENV=local` is answering the public internet, and
+`/horizon` is on that hostname with no gate in front of it.
+
+What is on that page is the deciding detail. Horizon lists queued job payloads,
+and in this application the jobs are orders: a customer name, a telephone
+number, a delivery address and a basket, per job. It is a customer data page
+wearing the costume of an ops tool. The default turns it into an unauthenticated
+one for exactly as long as the tunnel is up.
+
+**The default is also wrong in the other direction**, which is the half that
+usually goes unmentioned. Off a laptop, `app()->environment('local')` is false
+for everybody, including the person who deployed it, so a real install has no
+queue dashboard at all. That is the failure that produces a hand-rolled gate at
+2am, and hand-rolled gates are how `/horizon` ends up open on purpose.
+
+**Why the gate is only "is there a user".** It deliberately does not compare
+`restaurant_id`. Queues in this application are process-wide rather than
+tenant-scoped, so on the day somebody runs two restaurants on one install, every
+owner would see the other's jobs on that page. That is a real problem for the
+multi-tenant shape this schema is built for, and a `restaurant_id` comparison is
+the wrong fix — it would hide other tenants' jobs from an operator who has a
+legitimate reason to see all of them. It wants a role that tenants do not hold,
+and this repository does not have roles yet. The comment in
+`AppServiceProvider::gateHorizon` says so rather than leaving the next person to
+rediscover it.
+
+**The warning box in the README** is the other half. A tunnel does not publish
+nine endpoints; it publishes a hostname, and everything served on it. The box at
+step 1 of "Putting it on a real phone line" lists what is on that hostname and
+what to do about each, and `kitchenline:provision` re-checks the two that are
+configuration — `APP_DEBUG` and `ADMIN_PASSWORD` — on every run, naming
+whichever is still outstanding and printing nothing once both are dealt with. A
+warning that fires unconditionally is scenery by the third run.
+
+`APP_DEBUG=true` stays the default in `.env.example`. A forker's first hour
+needs stack traces, and the honest fix for the deploy is a check at the moment
+the hostname becomes public rather than a default that makes the laptop worse.
+
+---
+
+## 0049 — The seeded dashboard password is published on purpose, and refused in production
+
+**Decided:** alongside 0048, without asking.
+
+`DemoRestaurantSeeder` creates `owner@embergrill.example` with the password
+`password`, printed in the README. It now reads `ADMIN_PASSWORD` first, warns
+every time it falls back, and throws rather than falling back when
+`APP_ENV=production`.
+
+**Why not simply generate a random one and print it.** Because of what this
+repository is optimised for, which is the first hour after a fork. A random
+password printed once during `docker compose up` is a password scrolled past,
+and then the reader is in `tinker` writing `User::first()->update(...)` eight
+minutes into an hour that was supposed to end with a working demo. A known
+credential in the README is the right trade for a laptop, and it is only a trade
+because of what makes it wrong later — that the login page might be reachable by
+someone else. So the fix belongs at that boundary, not at the default.
+
+**Why production throws rather than generating a password.** A seeder that
+invents a credential in production has created an account nobody can log into
+and nobody knows exists, which is worse than either alternative. Refusing is the
+only failure mode that ends with a person making a decision. The message names
+the two ways out — set `ADMIN_PASSWORD`, or do not seed demo data into
+production at all, which is usually the right answer for a seeder that creates a
+fictional chicken shop.
+
+**The line is drawn at `production` rather than "anything but local"**, matching
+`AuthenticateAgent`'s treatment of the example agent token. Staging environments
+that genuinely want the demo restaurant should get it without a fight, and the
+consistency is worth more than the extra half-step of strictness: there is now
+one rule in this repository about published credentials, not two.
+
+**Re-seeding rotates it**, because `updateOrCreate` rewrites the password column
+every run. That makes "set `ADMIN_PASSWORD` and run `db:seed` again" a complete
+instruction, which is what the README now says.

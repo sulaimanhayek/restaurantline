@@ -11,8 +11,9 @@ use Illuminate\Database\Seeder;
  * Everything a fresh `docker compose up` needs to be a working demo: one
  * restaurant, its hours and delivery bands, a full menu, and a day of calls.
  *
- * Each seeder is idempotent, so running this a second time updates rather than
- * duplicates — except DemoOrdersSeeder, which appends a new day of traffic.
+ * Every seeder here is idempotent, so running this a second time updates rather
+ * than duplicates — including DemoOrdersSeeder, which rewrites the same day of
+ * calls rather than adding another one.
  */
 class DatabaseSeeder extends Seeder
 {
