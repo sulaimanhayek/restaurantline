@@ -1983,8 +1983,26 @@ instruction, which is what the README now says.
 
 ## The launch video ships in `docs/`, its working directory does not
 
-`brag-output/` is gitignored; `docs/brag.mp4` and `docs/brag.jpg` are committed
-and the README embeds the poster as a link to the video.
+`brag-output/` is gitignored; `docs/brag.mp4` and `docs/brag.jpg` are committed,
+and the README plays the video from a `github.com/user-attachments` URL.
+
+**That URL is not an arbitrary choice — it is the only thing that works.** Three
+things were tested and all three fail. A `<video>` tag in the README is stripped
+outright by GitHub's markdown sanitiser, so no amount of correct HTML produces a
+player. Linking a committed `.mp4` lands on the blob viewer, which renders no
+player for video, only a "View raw" link. And that raw URL serves
+`application/octet-stream`, so the browser downloads the file instead of playing
+it. What does work is a bare attachment URL on its own line, which GitHub
+rewrites into a real player; those URLs only exist once a file has been uploaded
+through the web UI, so the video was attached to the pull request that added it.
+The player is a github.com feature and nothing more — on npm, Packagist or a
+local markdown preview that line is a plain link, which is why the committed
+`docs/brag.mp4` is named in the README directly underneath it.
+
+`docs/brag.jpg` is the poster frame, already baked in as the video's own frame 0.
+The README no longer references it, but it is kept deliberately: it is the image
+to put in **Settings → General → Social preview**, which is what Slack, X and
+LinkedIn show when somebody pastes a link to the repository.
 
 **The working directory is build output.** `brag-output/composition/` is HTML,
 CSS and a 2.3 MB pile of source audio that exists only to regenerate the video.

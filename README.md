@@ -20,13 +20,15 @@ MIT licensed. Take it, rename it, bill for it.
 
 ## See it work
 
-[![restaurantline: a caller orders by phone and the ticket lands on the kitchen screen](docs/brag.jpg)](docs/brag.mp4)
+https://github.com/user-attachments/assets/f348d048-1af8-4f53-8baf-cd648f448e55
 
-Thirty seconds, no narration — [play it](docs/brag.mp4). A caller asks for
-delivery, the agent reads the address back before committing anything, declines
-to take a card number over the phone, and the order is on the kitchen display
-before the call ends. Every screen in it is this repository running against the
-seeded demo restaurant.
+Thirty seconds, no narration. A caller asks for delivery, the agent reads the
+address back before committing anything, declines to take a card number over the
+phone, and the order is on the kitchen display before the call ends. Every screen
+in it is this repository running against the seeded demo restaurant.
+
+That player only renders on GitHub. The same file is committed at
+[`docs/brag.mp4`](docs/brag.mp4) if you are reading this somewhere else.
 
 ---
 
