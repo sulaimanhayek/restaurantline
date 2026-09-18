@@ -18,6 +18,20 @@ MIT licensed. Take it, rename it, bill for it.
 
 ---
 
+## See it work
+
+https://github.com/user-attachments/assets/f348d048-1af8-4f53-8baf-cd648f448e55
+
+Thirty seconds, no narration. A caller asks for delivery, the agent reads the
+address back before committing anything, declines to take a card number over the
+phone, and the order is on the kitchen display before the call ends. Every screen
+in it is this repository running against the seeded demo restaurant.
+
+That player only renders on GitHub. The same file is committed at
+[`docs/brag.mp4`](docs/brag.mp4) if you are reading this somewhere else.
+
+---
+
 ## What this is, and what it is not
 
 **The conversation is not ours.** Listening, speaking, interruption,
@@ -131,8 +145,13 @@ between 11:30 and 3pm on weekdays — and a handful of orders in various states.
 | Horizon | <http://localhost:8000/horizon> |
 | Mailpit | <http://localhost:8025> |
 
-The seeded dashboard login is `owner@embergrill.example` / `password`. It is a
-demo seeder; `DemoRestaurantSeeder` is not something to run in production.
+The seeded dashboard login is `owner@embergrill.example` / `password`, and
+Horizon sits behind that same login rather than behind Laravel's default, which
+is "anyone at all, as long as `APP_ENV` is `local`".
+
+That password is in this file, so it is public. Set `ADMIN_PASSWORD` in `.env`
+and re-run `db:seed` to rotate it — the seeder refuses the published fallback
+outright when `APP_ENV=production`.
 
 Now watch it take an order without a telephone anywhere in sight:
 
@@ -163,13 +182,35 @@ own infrastructure, so `APP_URL=http://localhost:8000` produces an agent that
 answers the phone, sounds perfect, and cannot look up a single dish. An ngrok
 tunnel is fine for testing. `kitchenline:provision` warns you about this.
 
+> **A tunnel does not publish nine endpoints. It publishes a hostname.**
+>
+> Everything this application serves is then on it, reachable by anyone who
+> guesses the URL — not just `/api/agent/*`. Before you start one:
+>
+> - **`APP_DEBUG=false`.** Otherwise any unhandled error renders a page listing
+>   your whole environment: `ELEVENLABS_API_KEY`, `AGENT_API_TOKEN`, the
+>   database password. The agent endpoints never return a stack trace whatever
+>   this is set to — see `bootstrap/app.php` — but `/admin` and the webhooks
+>   will.
+> - **Set `ADMIN_PASSWORD` and re-seed.** `/admin` is on that hostname, and
+>   until you do, its password is three paragraphs up this page.
+> - **Set `AGENT_API_TOKEN`.** Step 2. It is the only thing between a stranger
+>   and your order endpoints.
+>
+> `/horizon` is already behind a login, so it is not on this list. Queue
+> payloads in this application are orders — names, telephone numbers, delivery
+> addresses — which is why it is not left on Laravel's default.
+>
+> `kitchenline:provision` re-checks the first two every run and names whichever
+> is still outstanding.
+
 **2. Set a real agent token.** `AGENT_API_TOKEN` is the shared secret between
 ElevenLabs and your order endpoints. The value in `.env.example` is published in
 this repository; `AuthenticateAgent` refuses it outright when `APP_ENV` is
 `production`.
 
 ```bash
-php -r "echo bin2hex(random_bytes(32));"
+docker compose exec app php -r "echo bin2hex(random_bytes(32));"
 ```
 
 **3. Provision.**
@@ -299,6 +340,40 @@ restaurant:
     ]
 }
 ```
+
+---
+
+## Playing a call to somebody who is not on it
+
+A conversation is what you are selling, and it does not survive being printed.
+`kitchenline:demo:render` takes a transcript this application already stored and
+speaks it with two voices — one for the caller, one for the agent — so you can
+play a real order to a restaurant owner sitting across a table with no phone
+line, no tunnel and no signal.
+
+```bash
+php artisan kitchenline:demo:render                 # the most recent call
+php artisan kitchenline:demo:render conv_abc123     # a particular one
+php artisan kitchenline:demo:render --out=pitch.wav
+```
+
+The transcripts come from wherever you have them: `migrate --seed` writes five
+demo calls, `kitchenline:eval --mode=live` produces real ones, and so does every
+real call once the post-call webhook has landed. Set `DEMO_CALLER_VOICE_ID` and
+`DEMO_AGENT_VOICE_ID` before you run it against a real account — pick the second
+to match `ELEVENLABS_VOICE_ID`, so the recording sounds like the thing that
+answers the phone.
+
+In fake mode it writes a silent file of the right length and tells you so in a
+yellow box, every time. That is so the command runs on a fresh clone, and so
+nobody finds out at the meeting.
+
+This is the only code here that touches audio, and it is deliberately downstream
+of everything: it never runs while a caller is on the line, nothing in the
+ordering flow calls it, and deleting it would change nothing about what happens
+when the phone rings. Handling live call audio is the hard, expensive part of a
+voice application and is the entire reason the voice lives at ElevenLabs. See
+[docs/DECISIONS.md](docs/DECISIONS.md) entry 0047.
 
 ---
 

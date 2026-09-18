@@ -176,6 +176,31 @@ interface ElevenLabsClient
     ): array;
 
     // -----------------------------------------------------------------------
+    // Speech
+    // -----------------------------------------------------------------------
+
+    /**
+     * POST /v1/text-to-speech/{voice_id} — one line of dialogue, as audio bytes.
+     *
+     * The odd one out here, and the only method on this interface that has
+     * nothing to do with putting an agent on a phone line. It exists for
+     * `kitchenline:demo:render`, which turns a transcript that a live eval or a
+     * real call already produced into something you can play to a client.
+     *
+     * Nothing in the ordering flow calls it and nothing should. This
+     * application never touches the audio of a live conversation — no stream,
+     * no turn-taking, no websocket — which is the entire reason the voice lives
+     * at ElevenLabs. Rendering a finished transcript afterwards is a different
+     * activity that happens to use the same account. See docs/DECISIONS.md.
+     *
+     * Returns the raw response body: a complete audio file in `$outputFormat`,
+     * not a stream and not JSON. `$outputFormat` must be one of ElevenLabs'
+     * documented values; the renderer asks for a `wav_*` one because it joins
+     * files by their samples.
+     */
+    public function textToSpeech(string $voiceId, string $text, string $outputFormat): string;
+
+    // -----------------------------------------------------------------------
     // Phone numbers
     // -----------------------------------------------------------------------
 

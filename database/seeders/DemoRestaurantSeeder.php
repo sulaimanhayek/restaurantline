@@ -11,6 +11,7 @@ use App\Models\Restaurant;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
+use RuntimeException;
 
 /**
  * The single restaurant a fresh clone comes up with.
@@ -23,6 +24,15 @@ use Illuminate\Support\Facades\Hash;
  */
 class DemoRestaurantSeeder extends Seeder
 {
+    /**
+     * The password this seeder uses when `ADMIN_PASSWORD` is unset.
+     *
+     * Published in the README, because a demo login nobody can find is not a
+     * demo login. Which is exactly why `seedAdminUser` will not fall back to
+     * it in production.
+     */
+    public const DEFAULT_PASSWORD = 'password';
+
     public function run(): void
     {
         $restaurant = Restaurant::query()->updateOrCreate(
@@ -154,8 +164,18 @@ class DemoRestaurantSeeder extends Seeder
     }
 
     /**
-     * A dashboard login. The credentials are printed by the entrypoint and
-     * documented in the README — this is a demo seeder, not a production one.
+     * A dashboard login, with a password that depends on where this is running.
+     *
+     * The address and the fallback password are both in the README, which is
+     * the point on a laptop: the first hour with this repo should not include
+     * a detour through `tinker` to get into the dashboard. It stops being the
+     * point the moment the login page is reachable by somebody else, so
+     * `ADMIN_PASSWORD` overrides it and production refuses the fallback
+     * outright — the same line `AuthenticateAgent` draws around the example
+     * agent token, for the same reason.
+     *
+     * Re-seeding rewrites the password, so setting `ADMIN_PASSWORD` and
+     * running `db:seed` again is how you rotate it.
      */
     private function seedAdminUser(Restaurant $restaurant): void
     {
@@ -164,9 +184,43 @@ class DemoRestaurantSeeder extends Seeder
             [
                 'restaurant_id' => $restaurant->id,
                 'name' => 'Ember Grill Owner',
-                'password' => Hash::make('password'),
+                'password' => Hash::make($this->adminPassword()),
                 'email_verified_at' => now(),
             ],
         );
+    }
+
+    /**
+     * `ADMIN_PASSWORD`, or the published default where that is survivable.
+     */
+    private function adminPassword(): string
+    {
+        $configured = config('restaurantline.admin_password');
+
+        if (is_string($configured) && $configured !== '') {
+            return $configured;
+        }
+
+        if (app()->isProduction()) {
+            throw new RuntimeException(
+                'DemoRestaurantSeeder would create owner@embergrill.example with the password published '
+                .'in this repository, and this is production. Set ADMIN_PASSWORD and run it again, or do '
+                .'not seed demo data here at all.',
+            );
+        }
+
+        /*
+         * Laravel's docblock says `$command` is a Command. It is null whenever
+         * a seeder is resolved from the container and run directly, which the
+         * test suite does — hence the nullsafe call PHPStan is objecting to on
+         * the strength of that docblock.
+         */
+        // @phpstan-ignore-next-line nullsafe.neverNull
+        $this->command?->warn(
+            'Dashboard login: owner@embergrill.example / '.self::DEFAULT_PASSWORD.' — published in the '
+            .'README, so set ADMIN_PASSWORD before anyone else can reach /admin.',
+        );
+
+        return self::DEFAULT_PASSWORD;
     }
 }

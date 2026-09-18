@@ -34,3 +34,9 @@ Thumbs.db
 /public/css/filament
 /public/js/filament
 /public/fonts/filament
+
+# /brag launch-video working directory: the HTML composition plus ~2.3 MB of
+# source audio, all of it only needed to regenerate the video. The rendered
+# result is tracked instead, at docs/brag.mp4. See docs/DECISIONS.md, including
+# the note on what MIT does and does not cover for that file's audio.
+/brag-output

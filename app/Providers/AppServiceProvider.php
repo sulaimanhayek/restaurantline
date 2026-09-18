@@ -21,6 +21,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
+use Laravel\Horizon\Horizon;
 
 /**
  * Where the outbound integrations are chosen.
@@ -102,6 +103,35 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->registerAgentRateLimiter();
+        $this->gateHorizon();
+    }
+
+    /**
+     * Horizon's dashboard, behind a login in every environment.
+     *
+     * Horizon's own default is `app()->environment('local')`, which fails in
+     * both directions. On a laptop it means no login at all, and this README
+     * tells you to put a tunnel in front of that laptop so ElevenLabs can reach
+     * your tool endpoints — a tunnel publishes /horizon alongside them, and the
+     * queue payloads on that page carry customer names, telephone numbers and
+     * delivery addresses in the clear. Off a laptop the same default locks the
+     * owner out of their own queue dashboard, which is why installs so often
+     * end up with a hand-rolled gate that lets everybody back in.
+     *
+     * An authenticated user, always, is the boring answer to both. The `web`
+     * middleware Horizon runs under has already resolved the session by the
+     * time this is asked, so it is the same login as the Filament dashboard.
+     *
+     * One thing it deliberately does not do is check which restaurant the user
+     * belongs to. Queues are process-wide rather than tenant-scoped, so on the
+     * day this runs two restaurants, every owner on that page would see the
+     * other's jobs. That is a real problem for the multi-tenant install this
+     * schema is shaped for, and the wrong one to solve with a `restaurant_id`
+     * comparison — it wants an operator role that tenants do not hold.
+     */
+    private function gateHorizon(): void
+    {
+        Horizon::auth(static fn (Request $request): bool => $request->user() !== null);
     }
 
     /**

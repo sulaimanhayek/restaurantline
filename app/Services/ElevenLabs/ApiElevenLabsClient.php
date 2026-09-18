@@ -189,6 +189,50 @@ final class ApiElevenLabsClient implements ElevenLabsClient
     }
 
     // -----------------------------------------------------------------------
+    // Speech
+    // -----------------------------------------------------------------------
+
+    /**
+     * The only method here that returns bytes rather than JSON, which is why it
+     * builds its own request instead of going through `post()`.
+     */
+    public function textToSpeech(string $voiceId, string $text, string $outputFormat): string
+    {
+        $path = '/v1/text-to-speech/'.rawurlencode($voiceId);
+
+        try {
+            $response = $this->request()
+                // The response is a WAV body, not JSON, and `request()` asks
+                // for JSON because everything else on this client returns it.
+                ->withHeaders(['Accept' => 'audio/*'])
+                ->post($this->url($path).'?output_format='.urlencode($outputFormat), [
+                    'text' => $text,
+                    'model_id' => (string) config('restaurantline.elevenlabs.tts_model', 'eleven_flash_v2_5'),
+                ]);
+        } catch (ConnectionException $exception) {
+            throw new ElevenLabsException('Could not reach ElevenLabs: '.$exception->getMessage());
+        }
+
+        if ($response->failed()) {
+            throw new ElevenLabsException(
+                sprintf('POST %s returned HTTP %d. %s', $path, $response->status(), $this->reason($response)),
+                $response->status(),
+                $response->body(),
+            );
+        }
+
+        $audio = $response->body();
+
+        if ($audio === '') {
+            throw new ElevenLabsException(
+                sprintf('POST %s succeeded but returned an empty body, so there is no audio to write.', $path),
+            );
+        }
+
+        return $audio;
+    }
+
+    // -----------------------------------------------------------------------
     // Phone numbers
     // -----------------------------------------------------------------------
 

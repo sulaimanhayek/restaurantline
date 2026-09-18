@@ -52,7 +52,7 @@ services:
     <<: *app
     command: ["docker/php/entrypoint.sh", "serve"]
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "${DOCKER_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/up') ? 0 : 1);"]
       interval: 10s
@@ -79,7 +79,7 @@ services:
     <<: *app
     command: ["docker/php/entrypoint.sh", "reverb"]
     ports:
-      - "${REVERB_PORT:-8080}:8080"
+      - "${DOCKER_BIND_ADDRESS:-127.0.0.1}:${REVERB_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -157,7 +157,7 @@ services:
       - .:/var/www/html
       - node-modules:/var/www/html/node_modules
     ports:
-      - "${VITE_PORT:-5173}:5173"
+      - "${DOCKER_BIND_ADDRESS:-127.0.0.1}:${VITE_PORT:-5173}:5173"
     profiles:
       - frontend
 

@@ -1781,3 +1781,246 @@ but phpdotenv emitted 845 `failed to open stream` warnings per run without one,
 and a log nobody will read is a log that hides the next failure.
 
 **Reversal cost:** low. One method, two helpers and a dataset.
+
+---
+
+## 0046 — Every published port binds to loopback, including the app's
+
+**Decided:** after finding the dashboard readable from another machine on a
+public library's WiFi.
+
+`compose.yaml` published seven ports. Four of them — postgres, redis, and
+Mailpit's two — were written as
+`"${DOCKER_BIND_ADDRESS:-127.0.0.1}:${PORT}:port"`. Three were not: `app` on
+8000, `reverb` on 8080 and `vite` on 5173 were bare `"${PORT}:port"`, which
+Docker binds to `0.0.0.0`. All three now carry the same prefix as the rest.
+
+**What that actually exposed.** `netstat -an -p tcp | grep LISTEN` showed
+`*.8000` rather than `127.0.0.1.8000`, and `curl http://<lan-ip>:8000/horizon`
+from the same network returned HTTP 200 with no authentication — Horizon's
+default gate is `app()->environment('local')`, which is a no-op on exactly the
+machine a developer runs it on. So on any untrusted network, a fresh clone of
+this repository served its queue dashboard, its Filament panel, and an admin
+password printed in its own README to everyone in the room. After the fix the
+same curl returns HTTP 000 and `curl http://127.0.0.1:8000/api/agent/hours`
+still returns its 401, which is the pair worth checking: refused from outside,
+unchanged from inside.
+
+**Why it was worth interrupting for.** The env var was already there, already
+documented, and already used by the services a developer is taught to think of
+as sensitive. The three that missed it are the three a developer thinks of as
+"just the app" — which is the one that has the session cookies, the dashboard
+and the order data. `DOCKER_BIND_ADDRESS` still exists for anyone who wants to
+reach the app from a phone on the same LAN; they now have to say so.
+
+**Reversal cost:** none. Seven lines that now say the same thing.
+
+---
+
+## 0047 — A repository that scopes out audio nonetheless ships a TTS renderer
+
+**Decided:** while building a demo for a client meeting, without asking.
+
+`kitchenline:demo:render` reads a transcript this application already stored and
+asks ElevenLabs to speak it with two voices, writing a `.wav` you can play to
+somebody. It is the only code here that touches audio, and this repository is
+explicit everywhere else that it does not: no stream, no turn-taking, no
+websocket, no buffers. `SimulationRunner`'s docblock says "There is no audio
+anywhere in this" and that is still true of the ordering path.
+
+**Why the exception is not a crack in the rule.** The rule is about the live
+call. Handling the audio of a conversation in progress is the thing that makes a
+voice application hard, expensive and fragile, and it is exactly the thing
+ElevenLabs is being paid for. Speaking a transcript that finished an hour ago
+shares a vendor with that and nothing else: it is offline, it is not on any
+request path, nothing in the ordering flow calls it, and if it broke completely
+no caller would notice. Put the other way — the test for whether this belongs is
+whether deleting it changes what happens when the phone rings. It does not.
+
+**Why it exists at all.** The thing being sold is a conversation, and a
+conversation is not legible on paper. A freelancer showing this to a restaurant
+owner has three options: put them on a real call, which needs a provisioned
+agent, a phone number and a network; show them a transcript, which reads like a
+chat log and demonstrates none of the pacing that makes a voice agent
+convincing; or play them a recording. The third is the only one that works from
+a laptop in a room with no signal, and it was a couple of hundred lines.
+
+**`wav_24000`, and the three constraints that left one answer.** Turns are
+joined by concatenating their samples, which is the whole of the stitching
+implementation, and that needs uncompressed audio — MP3 frames cannot simply be
+appended, and building the silence between turns as valid MP3 frames would be
+precisely the audio engineering this project refuses to do. That rules out every
+`mp3_*` format. ElevenLabs then gates the rest by subscription: their docs say
+PCM and WAV at 44.1kHz require Pro, and 192kbps MP3 requires Creator. And there
+is no `ffmpeg` in the container or on the host, so there is no conversion step
+available to paper over a wrong choice. `wav_24000` is uncompressed, joinable by
+string concatenation, and free-tier. It is not a preference; it is the
+intersection.
+
+**The parser walks RIFF chunks rather than skipping 44 bytes.** A canonical WAV
+header is 44 bytes and ElevenLabs currently sends one, so reading from byte 44
+would work today. It would also turn a `LIST` or `fact` chunk — which any
+encoder may legally insert, and some do — into a burst of static at the top of
+every turn, in a file whose only job is to be played to a client. The chunk walk
+is fifteen lines and removes the entire class.
+
+**The fake pretends here, where it refuses elsewhere.** `simulateConversation`
+throws in fake mode, because a fabricated transcript graded as a pass is a lie
+that hides a broken agent. `textToSpeech` returns silence of a plausible length
+instead, because the asymmetry runs the other way: a silent file is a lie nobody
+can act on — you play it and hear nothing, which is unmistakable — and in
+exchange the whole render path, stitching and pauses and header arithmetic and
+the file on disk, is exercised by CI and by anyone trying the command before
+they have an account. The command prints `THIS FILE IS SILENT` in a yellow box
+on every fake-mode run, so the discovery happens at the terminal rather than at
+the meeting.
+
+**No default voice ids.** `DEMO_CALLER_VOICE_ID` and `DEMO_AGENT_VOICE_ID` ship
+empty and the command refuses to call a real account without both. Inventing two
+would give every fork of this repository the same pair of voices, and a stale or
+wrong id fails at render time with a 404 that reads like a bug in this
+application rather than a value somebody has to choose.
+
+**Reversal cost:** low, and containable. Four classes under `App\Services\Demo`,
+one command, one interface method with three implementations, and a `demo` block
+in `config/restaurantline.php`. Nothing else imports any of it. If the
+no-audio line needs to be drawn harder later, the whole thing lifts out in one
+commit without touching a single line that runs while a caller is on the phone.
+
+---
+
+## 0048 — Horizon gets a login, and the tunnel instruction gets a warning box
+
+**Decided:** while hardening the repository after the port-binding fix in 0046,
+without asking.
+
+Horizon's dashboard is now behind `Horizon::auth`, which asks for an
+authenticated user and nothing else. Its default is
+`app()->environment('local')`.
+
+**Why that default is wrong here specifically.** Not because it is insecure in
+general — for a lot of applications it is a reasonable trade, since a queue
+dashboard on a laptop is nobody's business but the laptop's. It is wrong here
+because of a sentence in this repository's own README: "An ngrok tunnel is fine
+for testing." That instruction exists because the agent tool endpoints have to
+be reachable from ElevenLabs' infrastructure, and it is the normal path through
+this project rather than an unusual one. The moment a reader follows it, a
+machine running `APP_ENV=local` is answering the public internet, and
+`/horizon` is on that hostname with no gate in front of it.
+
+What is on that page is the deciding detail. Horizon lists queued job payloads,
+and in this application the jobs are orders: a customer name, a telephone
+number, a delivery address and a basket, per job. It is a customer data page
+wearing the costume of an ops tool. The default turns it into an unauthenticated
+one for exactly as long as the tunnel is up.
+
+**The default is also wrong in the other direction**, which is the half that
+usually goes unmentioned. Off a laptop, `app()->environment('local')` is false
+for everybody, including the person who deployed it, so a real install has no
+queue dashboard at all. That is the failure that produces a hand-rolled gate at
+2am, and hand-rolled gates are how `/horizon` ends up open on purpose.
+
+**Why the gate is only "is there a user".** It deliberately does not compare
+`restaurant_id`. Queues in this application are process-wide rather than
+tenant-scoped, so on the day somebody runs two restaurants on one install, every
+owner would see the other's jobs on that page. That is a real problem for the
+multi-tenant shape this schema is built for, and a `restaurant_id` comparison is
+the wrong fix — it would hide other tenants' jobs from an operator who has a
+legitimate reason to see all of them. It wants a role that tenants do not hold,
+and this repository does not have roles yet. The comment in
+`AppServiceProvider::gateHorizon` says so rather than leaving the next person to
+rediscover it.
+
+**The warning box in the README** is the other half. A tunnel does not publish
+nine endpoints; it publishes a hostname, and everything served on it. The box at
+step 1 of "Putting it on a real phone line" lists what is on that hostname and
+what to do about each, and `kitchenline:provision` re-checks the two that are
+configuration — `APP_DEBUG` and `ADMIN_PASSWORD` — on every run, naming
+whichever is still outstanding and printing nothing once both are dealt with. A
+warning that fires unconditionally is scenery by the third run.
+
+`APP_DEBUG=true` stays the default in `.env.example`. A forker's first hour
+needs stack traces, and the honest fix for the deploy is a check at the moment
+the hostname becomes public rather than a default that makes the laptop worse.
+
+---
+
+## 0049 — The seeded dashboard password is published on purpose, and refused in production
+
+**Decided:** alongside 0048, without asking.
+
+`DemoRestaurantSeeder` creates `owner@embergrill.example` with the password
+`password`, printed in the README. It now reads `ADMIN_PASSWORD` first, warns
+every time it falls back, and throws rather than falling back when
+`APP_ENV=production`.
+
+**Why not simply generate a random one and print it.** Because of what this
+repository is optimised for, which is the first hour after a fork. A random
+password printed once during `docker compose up` is a password scrolled past,
+and then the reader is in `tinker` writing `User::first()->update(...)` eight
+minutes into an hour that was supposed to end with a working demo. A known
+credential in the README is the right trade for a laptop, and it is only a trade
+because of what makes it wrong later — that the login page might be reachable by
+someone else. So the fix belongs at that boundary, not at the default.
+
+**Why production throws rather than generating a password.** A seeder that
+invents a credential in production has created an account nobody can log into
+and nobody knows exists, which is worse than either alternative. Refusing is the
+only failure mode that ends with a person making a decision. The message names
+the two ways out — set `ADMIN_PASSWORD`, or do not seed demo data into
+production at all, which is usually the right answer for a seeder that creates a
+fictional chicken shop.
+
+**The line is drawn at `production` rather than "anything but local"**, matching
+`AuthenticateAgent`'s treatment of the example agent token. Staging environments
+that genuinely want the demo restaurant should get it without a fight, and the
+consistency is worth more than the extra half-step of strictness: there is now
+one rule in this repository about published credentials, not two.
+
+**Re-seeding rotates it**, because `updateOrCreate` rewrites the password column
+every run. That makes "set `ADMIN_PASSWORD` and run `db:seed` again" a complete
+instruction, which is what the README now says.
+
+## The launch video ships in `docs/`, its working directory does not
+
+`brag-output/` is gitignored; `docs/brag.mp4` and `docs/brag.jpg` are committed,
+and the README plays the video from a `github.com/user-attachments` URL.
+
+**That URL is not an arbitrary choice — it is the only thing that works.** Three
+things were tested and all three fail. A `<video>` tag in the README is stripped
+outright by GitHub's markdown sanitiser, so no amount of correct HTML produces a
+player. Linking a committed `.mp4` lands on the blob viewer, which renders no
+player for video, only a "View raw" link. And that raw URL serves
+`application/octet-stream`, so the browser downloads the file instead of playing
+it. What does work is a bare attachment URL on its own line, which GitHub
+rewrites into a real player; those URLs only exist once a file has been uploaded
+through the web UI, so the video was attached to the pull request that added it.
+The player is a github.com feature and nothing more — on npm, Packagist or a
+local markdown preview that line is a plain link, which is why the committed
+`docs/brag.mp4` is named in the README directly underneath it.
+
+`docs/brag.jpg` is the poster frame, already baked in as the video's own frame 0.
+The README no longer references it, but it is kept deliberately: it is the image
+to put in **Settings → General → Social preview**, which is what Slack, X and
+LinkedIn show when somebody pastes a link to the repository.
+
+**The working directory is build output.** `brag-output/composition/` is HTML,
+CSS and a 2.3 MB pile of source audio that exists only to regenerate the video.
+Nobody cloning this repository to run a restaurant phone line needs it, and it
+re-renders from the composition with one command. The 1.9 MB result is what has
+value, so that is what is tracked.
+
+**The audio licence is accepted, not resolved.** The render carries a music bed
+and SFX taken from the `/brag` plugin's asset library — the music is from
+ende.app's "Happy Beats / Business Moves" series. That library's own README
+says the exact licence terms still need to be verified and documented. The
+decision was made with that in front of us: the plugin bundles those files for
+precisely this use, so the risk is judged low and the video ships as rendered.
+
+This is worth writing down because the repository is MIT and the video is not
+obviously separable from it. **MIT covers this repository's own source. It does
+not purport to relicense the music or the sound effects inside `docs/brag.mp4`**,
+which remain whatever ende.app and the SFX authors grant. Anyone reusing the
+video — as opposed to the code — should establish that for themselves. If the
+terms turn out to be restrictive, the fix is a re-render with the music muted;
+the composition is unchanged by it.
