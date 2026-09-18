@@ -1980,3 +1980,29 @@ one rule in this repository about published credentials, not two.
 **Re-seeding rotates it**, because `updateOrCreate` rewrites the password column
 every run. That makes "set `ADMIN_PASSWORD` and run `db:seed` again" a complete
 instruction, which is what the README now says.
+
+## The launch video ships in `docs/`, its working directory does not
+
+`brag-output/` is gitignored; `docs/brag.mp4` and `docs/brag.jpg` are committed
+and the README embeds the poster as a link to the video.
+
+**The working directory is build output.** `brag-output/composition/` is HTML,
+CSS and a 2.3 MB pile of source audio that exists only to regenerate the video.
+Nobody cloning this repository to run a restaurant phone line needs it, and it
+re-renders from the composition with one command. The 1.9 MB result is what has
+value, so that is what is tracked.
+
+**The audio licence is accepted, not resolved.** The render carries a music bed
+and SFX taken from the `/brag` plugin's asset library — the music is from
+ende.app's "Happy Beats / Business Moves" series. That library's own README
+says the exact licence terms still need to be verified and documented. The
+decision was made with that in front of us: the plugin bundles those files for
+precisely this use, so the risk is judged low and the video ships as rendered.
+
+This is worth writing down because the repository is MIT and the video is not
+obviously separable from it. **MIT covers this repository's own source. It does
+not purport to relicense the music or the sound effects inside `docs/brag.mp4`**,
+which remain whatever ende.app and the SFX authors grant. Anyone reusing the
+video — as opposed to the code — should establish that for themselves. If the
+terms turn out to be restrictive, the fix is a re-render with the music muted;
+the composition is unchanged by it.

@@ -18,6 +18,18 @@ MIT licensed. Take it, rename it, bill for it.
 
 ---
 
+## See it work
+
+[![restaurantline: a caller orders by phone and the ticket lands on the kitchen screen](docs/brag.jpg)](docs/brag.mp4)
+
+Thirty seconds, no narration — [play it](docs/brag.mp4). A caller asks for
+delivery, the agent reads the address back before committing anything, declines
+to take a card number over the phone, and the order is on the kitchen display
+before the call ends. Every screen in it is this repository running against the
+seeded demo restaurant.
+
+---
+
 ## What this is, and what it is not
 
 **The conversation is not ours.** Listening, speaking, interruption,
